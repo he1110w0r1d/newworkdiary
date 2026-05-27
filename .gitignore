@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+npm-debug.log*
+
+docker-compose.override.yml
+
+server/public/reports/*.html
