@@ -144,7 +144,7 @@ function App() {
   const [todoItems, setTodoItems] = usePersistentState<TodoItem[]>(STORAGE_KEYS.todos, initialTodos);
   const [missionItems, setMissionItems] = useState<Mission[]>([]);
   const [missionTimelineNodes, setMissionTimelineNodes] = useState<MissionNode[]>([]);
-  const [activeView, setActiveView] = useState<ViewKey>("dashboard");
+  const [activeView, setActiveView] = useState<ViewKey>(() => (window.location.pathname === "/admin" ? "admin" : "dashboard"));
   const [diaryFilter, setDiaryFilter] = useState<"all" | "human" | "agent">("all");
   const [diaryMode, setDiaryMode] = useState<"active" | "trash">("active");
   const [searchQuery, setSearchQuery] = useState("");
@@ -829,6 +829,16 @@ function App() {
         )}
         {activeView === "agent" && <AgentKeyView onAgentKeysChanged={loadAgentConnectionCount} />}
         {activeView === "admin" && currentUser?.role === "admin" && <AdminView />}
+        {activeView === "admin" && currentUser && currentUser.role !== "admin" && (
+          <section className="page-stack">
+            <PageHeader eyebrow="Admin Console" title="后台管理" copy="当前账号没有管理员权限。" />
+            <section className="panel empty-state">
+              <ShieldCheck size={28} />
+              <h2>需要管理员账号</h2>
+              <p>请使用管理员账号登录后访问后台。</p>
+            </section>
+          </section>
+        )}
         {activeView === "todos" && (
           <TodosView
             todoItems={todoItems}
