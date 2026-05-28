@@ -3620,8 +3620,10 @@ function AdminView() {
   const adminStats: StatItem[] = [
     { label: "总用户", value: String(totals?.users ?? 0), icon: Users },
     { label: "今日新增", value: String(totals?.newUsersToday ?? 0), icon: Plus },
-    { label: "7日活跃", value: String(totals?.activeUsers7d ?? 0), icon: Sparkles },
-    { label: "30日活跃", value: String(totals?.activeUsers30d ?? 0), icon: CalendarDays },
+    { label: "DAU", value: String(totals?.activeUsersToday ?? 0), icon: Sparkles },
+    { label: "WAU", value: String(totals?.activeUsers7d ?? 0), icon: CalendarDays },
+    { label: "MAU", value: String(totals?.activeUsers30d ?? 0), icon: Users },
+    { label: "次日留存", value: `${totals?.retention1d ?? 0}%`, icon: CheckCircle2 },
     { label: "待处理反馈", value: String(totals?.openFeedbacks ?? 0), icon: MessageSquareText },
   ];
 

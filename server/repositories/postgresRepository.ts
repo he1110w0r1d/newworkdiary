@@ -2032,8 +2032,10 @@ export async function updatePostgresAnnouncement(
 export type AdminOverview = {
   totals: {
     users: number;
+    activeUsersToday: number;
     activeUsers7d: number;
     activeUsers30d: number;
+    retention1d: number;
     newUsersToday: number;
     newUsers7d: number;
     newUsers30d: number;
@@ -2080,8 +2082,10 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
   const [totalsResult, dailyResult] = await Promise.all([
     pool.query<{
       users: string;
+      active_users_today: string;
       active_users_7d: string;
       active_users_30d: string;
+      retention_1d: string;
       new_users_today: string;
       new_users_7d: string;
       new_users_30d: string;
@@ -2098,6 +2102,12 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
           (
             SELECT COUNT(DISTINCT user_id)
             FROM user_activity_events
+            WHERE created_at >= CURRENT_DATE
+              AND user_id IS NOT NULL
+          )::text AS active_users_today,
+          (
+            SELECT COUNT(DISTINCT user_id)
+            FROM user_activity_events
             WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
               AND user_id IS NOT NULL
           )::text AS active_users_7d,
@@ -2107,6 +2117,21 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
             WHERE created_at >= CURRENT_DATE - INTERVAL '29 days'
               AND user_id IS NOT NULL
           )::text AS active_users_30d,
+          (
+            WITH cohort AS (
+              SELECT id FROM users WHERE created_at::date = CURRENT_DATE - INTERVAL '1 day'
+            ),
+            retained AS (
+              SELECT COUNT(DISTINCT user_activity_events.user_id)::numeric AS count
+              FROM user_activity_events
+              INNER JOIN cohort ON cohort.id = user_activity_events.user_id
+              WHERE user_activity_events.created_at >= CURRENT_DATE
+            )
+            SELECT CASE
+              WHEN (SELECT COUNT(*) FROM cohort) = 0 THEN 0
+              ELSE ROUND(((SELECT count FROM retained) / (SELECT COUNT(*) FROM cohort)) * 100)
+            END
+          )::text AS retention_1d,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE)::text AS new_users_today,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '6 days')::text AS new_users_7d,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '29 days')::text AS new_users_30d,
@@ -2180,8 +2205,10 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
   return {
     totals: {
       users: number(totals?.users),
+      activeUsersToday: number(totals?.active_users_today),
       activeUsers7d: number(totals?.active_users_7d),
       activeUsers30d: number(totals?.active_users_30d),
+      retention1d: number(totals?.retention_1d),
       newUsersToday: number(totals?.new_users_today),
       newUsers7d: number(totals?.new_users_7d),
       newUsers30d: number(totals?.new_users_30d),

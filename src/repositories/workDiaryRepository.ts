@@ -141,8 +141,10 @@ export type SystemAnnouncement = {
 export type AdminOverviewResponse = {
   totals: {
     users: number;
+    activeUsersToday: number;
     activeUsers7d: number;
     activeUsers30d: number;
+    retention1d: number;
     newUsersToday: number;
     newUsers7d: number;
     newUsers30d: number;
