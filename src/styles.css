@@ -3874,6 +3874,29 @@ h1 {
   font-weight: 800;
 }
 
+.dashboard-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-inner .dashboard-share-actions button {
+  justify-content: center;
+}
+
+.share-inner .dashboard-share-actions .share-secondary-btn {
+  border: 1px solid rgba(90, 191, 155, 0.22);
+  color: var(--mint-deep);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.share-inline-message {
+  margin: -4px 0 0;
+  color: var(--mint-deep);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;

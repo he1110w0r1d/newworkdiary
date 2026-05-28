@@ -846,6 +846,7 @@ function App() {
             onGenerateShare={() => {
               void handleGenerateShareCard();
             }}
+            onOpenSharePage={() => setActiveView("share")}
             missions={missionItems}
           />
         )}
@@ -994,6 +995,7 @@ function DashboardView({
   onRunAgentReview,
   onToggleTodo,
   onGenerateShare,
+  onOpenSharePage,
   missions,
 }: {
   entries: DiaryEntry[];
@@ -1006,6 +1008,7 @@ function DashboardView({
   onRunAgentReview: () => void;
   onToggleTodo: (id: number) => void;
   onGenerateShare: () => void;
+  onOpenSharePage: () => void;
   missions: Mission[];
 }) {
   return (
@@ -1062,6 +1065,7 @@ function DashboardView({
           shareGenerated={shareGenerated}
           shareCard={shareCard}
           onGenerateShare={onGenerateShare}
+          onOpenSharePage={onOpenSharePage}
         />
       </div>
     </>
@@ -1346,12 +1350,26 @@ function SharePreview({
   shareGenerated,
   shareCard,
   onGenerateShare,
+  onOpenSharePage,
 }: {
   entries: DiaryEntry[];
   shareGenerated: boolean;
   shareCard: ShareCardResponse | null;
   onGenerateShare: () => void;
+  onOpenSharePage: () => void;
 }) {
+  const [shareMessage, setShareMessage] = useState("");
+
+  async function copyShareLink() {
+    if (!shareCard) return;
+    try {
+      await navigator.clipboard.writeText(shareCard.shareUrl);
+      setShareMessage("链接已复制，可以直接发给朋友");
+    } catch {
+      setShareMessage("复制失败，请到分享页手动复制");
+    }
+  }
+
   return (
     <section className="share-card">
       <div className="share-inner">
@@ -1368,10 +1386,25 @@ function SharePreview({
           {shareCard ? <ShareQr value={shareCard.shareUrl} /> : <div className="fake-qr" />}
           <span>{shareCard ? "扫码查看我的工作小花园" : "生成后显示分享二维码"}</span>
         </div>
-        <button onClick={onGenerateShare}>
-          <Share2 size={16} />
-          {shareGenerated ? "重新生成卡片" : "生成朋友圈卡片"}
-        </button>
+        <div className="dashboard-share-actions">
+          <button onClick={onGenerateShare}>
+            <Share2 size={16} />
+            {shareGenerated ? "重新生成卡片" : "生成朋友圈卡片"}
+          </button>
+          {shareCard && (
+            <>
+              <button className="share-secondary-btn" onClick={() => void copyShareLink()}>
+                <Link size={16} />
+                复制链接
+              </button>
+              <button className="share-secondary-btn" onClick={onOpenSharePage}>
+                <Image size={16} />
+                去分享页
+              </button>
+            </>
+          )}
+        </div>
+        {shareMessage && <p className="share-inline-message">{shareMessage}</p>}
       </div>
     </section>
   );
