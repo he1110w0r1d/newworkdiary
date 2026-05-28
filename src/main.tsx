@@ -1152,7 +1152,7 @@ function Topbar({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const isDemo = !currentUser || currentUser.username === "demo";
+  const isLoggedOut = !currentUser;
   const userInitial = (currentUser?.nickname || currentUser?.username || "G").slice(0, 1);
 
   return (
@@ -1196,7 +1196,7 @@ function Topbar({
           <Bell size={18} />
           {notificationCount > 0 && <span className="notification-badge">{notificationCount}</span>}
         </button>
-        {isDemo ? (
+        {isLoggedOut ? (
           <button className="soft-btn login-btn" onClick={onLoginClick} style={{ gap: "6px", height: "36px", borderRadius: "10px" }}>
             <Lock size={14} />
             登录 / 注册
