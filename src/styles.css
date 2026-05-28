@@ -3575,7 +3575,7 @@ h1 {
 
 .announcement-banner {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 12px;
   align-items: start;
   padding: 14px 16px;
@@ -3599,6 +3599,25 @@ h1 {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.announcement-dismiss {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(237, 95, 159, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.announcement-dismiss:hover {
+  transform: translateY(-1px);
+  color: var(--pink-deep);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .notification-btn {

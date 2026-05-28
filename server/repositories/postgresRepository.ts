@@ -2029,6 +2029,21 @@ export async function updatePostgresAnnouncement(
   return result.rows[0] ?? null;
 }
 
+export async function deletePostgresAnnouncement(id: number, adminUserId: number): Promise<boolean> {
+  const result = await pool.query(
+    `
+      DELETE FROM system_announcements
+      WHERE id = $1
+    `,
+    [id],
+  );
+  if ((result.rowCount ?? 0) > 0) {
+    await recordPostgresUserActivity(adminUserId, "admin.announcement.delete", "announcement", id);
+    return true;
+  }
+  return false;
+}
+
 export type AdminOverview = {
   totals: {
     users: number;

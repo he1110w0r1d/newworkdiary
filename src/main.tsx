@@ -82,6 +82,7 @@ import {
   applyRestoreBackup,
   createFeedback,
   createAdminAnnouncement,
+  deleteAdminAnnouncement,
   getAdminOverview,
   getAdminUserDetail,
   getCurrentAnnouncement,
@@ -166,6 +167,14 @@ function App() {
   const [shareCard, setShareCard] = useState<ShareCardResponse | null>(null);
   const [agentConnectionCount, setAgentConnectionCount] = useState(0);
   const [announcement, setAnnouncement] = useState<SystemAnnouncement | null>(null);
+  const [dismissedAnnouncementIds, setDismissedAnnouncementIds] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem("wd_dismissed_announcements");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [feedbackReplyCount, setFeedbackReplyCount] = useState(0);
   const [modelConfig, setModelConfig] = useState<ModelServiceConfig>({
     provider: "OpenAI Compatible",
@@ -292,10 +301,22 @@ function App() {
 
   async function loadAnnouncement() {
     try {
-      setAnnouncement(await getCurrentAnnouncement());
+      const currentAnnouncement = await getCurrentAnnouncement();
+      setAnnouncement(
+        currentAnnouncement && !dismissedAnnouncementIds.includes(currentAnnouncement.id) ? currentAnnouncement : null,
+      );
     } catch {
       setAnnouncement(null);
     }
+  }
+
+  function dismissAnnouncement(id: number) {
+    setAnnouncement(null);
+    setDismissedAnnouncementIds((current) => {
+      const next = current.includes(id) ? current : [...current, id].slice(-50);
+      localStorage.setItem("wd_dismissed_announcements", JSON.stringify(next));
+      return next;
+    });
   }
 
   async function loadFeedbackNotifications() {
@@ -810,7 +831,7 @@ function App() {
           onLogout={handleLogout}
           onLoginClick={() => setShowAuthModal(true)}
         />
-        {announcement && <AnnouncementBanner announcement={announcement} />}
+        {announcement && <AnnouncementBanner announcement={announcement} onDismiss={dismissAnnouncement} />}
         {activeView === "dashboard" && (
           <DashboardView
             entries={entries}
@@ -1047,7 +1068,13 @@ function DashboardView({
   );
 }
 
-function AnnouncementBanner({ announcement }: { announcement: SystemAnnouncement }) {
+function AnnouncementBanner({
+  announcement,
+  onDismiss,
+}: {
+  announcement: SystemAnnouncement;
+  onDismiss: (id: number) => void;
+}) {
   return (
     <section className="announcement-banner">
       <Bell size={18} />
@@ -1055,6 +1082,9 @@ function AnnouncementBanner({ announcement }: { announcement: SystemAnnouncement
         <strong>{announcement.title}</strong>
         <p>{announcement.content}</p>
       </div>
+      <button className="announcement-dismiss" onClick={() => onDismiss(announcement.id)} aria-label="关闭公告">
+        <X size={16} />
+      </button>
     </section>
   );
 }
@@ -3639,6 +3669,18 @@ function AdminView() {
     }
   }
 
+  async function removeAnnouncement(announcement: SystemAnnouncement) {
+    const confirmed = window.confirm(`确定删除公告「${announcement.title}」吗？删除后普通用户不会再看到它。`);
+    if (!confirmed) return;
+
+    try {
+      await deleteAdminAnnouncement(announcement.id);
+      setAnnouncements((current) => current.filter((item) => item.id !== announcement.id));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "公告删除失败");
+    }
+  }
+
   const totals = overview?.totals;
   const adminStats: StatItem[] = [
     { label: "总用户", value: String(totals?.users ?? 0), icon: Users },
@@ -3858,6 +3900,9 @@ function AdminView() {
                 <div>
                   <button className="soft-btn" onClick={() => void toggleAnnouncement(announcement)}>
                     {announcement.status === "active" ? "暂停" : "启用"}
+                  </button>
+                  <button className="mini-danger-btn" onClick={() => void removeAnnouncement(announcement)}>
+                    删除
                   </button>
                 </div>
               </article>

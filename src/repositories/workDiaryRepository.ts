@@ -569,6 +569,12 @@ export async function updateAdminAnnouncement(
   });
 }
 
+export async function deleteAdminAnnouncement(id: number) {
+  return apiRequest<void>(`/admin/announcements/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function listAdminAuditLogs(userId?: number) {
   const query = userId ? `?userId=${userId}` : "";
   return apiRequest<AgentAuditLogRow[]>(`/admin/audit-logs${query}`);

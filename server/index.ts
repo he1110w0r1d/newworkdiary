@@ -47,6 +47,7 @@ import {
   recordPostgresUserActivity,
   createPostgresFeedback,
   createPostgresAnnouncement,
+  deletePostgresAnnouncement,
   getActivePostgresAnnouncement,
   listPostgresFeedbacks,
   listPostgresAnnouncements,
@@ -622,6 +623,28 @@ app.patch("/api/admin/announcements/:id", requireAuth, requireAdmin, async (requ
   } catch (error) {
     response.status(503).json({
       message: "Failed to update announcement",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.delete("/api/admin/announcements/:id", requireAuth, requireAdmin, async (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    response.status(400).json({ message: "Invalid announcement id" });
+    return;
+  }
+
+  try {
+    const deleted = await deletePostgresAnnouncement(id, request.user!.id);
+    if (!deleted) {
+      response.status(404).json({ message: "Announcement not found" });
+      return;
+    }
+    response.status(204).send();
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to delete announcement",
       detail: error instanceof Error ? error.message : "Unknown error",
     });
   }
