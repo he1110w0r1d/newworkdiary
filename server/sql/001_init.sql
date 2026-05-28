@@ -5,11 +5,14 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     nickname VARCHAR(100),
+    role VARCHAR(20) DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
     bio TEXT,
     avatar VARCHAR(255),
     work_profile JSONB DEFAULT '{}'::jsonb,
     llm_configs JSONB DEFAULT '[]'::jsonb,
     embedding_configs JSONB DEFAULT '[]'::jsonb,
+    last_login_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -185,3 +188,30 @@ CREATE TABLE IF NOT EXISTS diary_embeddings (
     CONSTRAINT unique_user_diary_chunk UNIQUE (user_id, diary_id, chunk_id)
 );
 CREATE INDEX IF NOT EXISTS idx_diary_embeddings_vector ON diary_embeddings USING hnsw (embedding vector_cosine_ops);
+
+CREATE TABLE IF NOT EXISTS feedbacks (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id) ON DELETE SET NULL,
+    type VARCHAR(30) DEFAULT 'other' CHECK (type IN ('bug', 'suggestion', 'usage', 'model', 'other')),
+    status VARCHAR(30) DEFAULT 'open' CHECK (status IN ('open', 'processing', 'resolved', 'closed')),
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    contact VARCHAR(255),
+    admin_note TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_feedbacks_status_time ON feedbacks(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedbacks_user_time ON feedbacks(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS user_activity_events (
+    id SERIAL PRIMARY KEY,
+    user_id INT REFERENCES users(id) ON DELETE SET NULL,
+    event_type VARCHAR(80) NOT NULL,
+    target_type VARCHAR(50),
+    target_id INT,
+    meta JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_user_activity_events_user_time ON user_activity_events(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_activity_events_type_time ON user_activity_events(event_type, created_at DESC);

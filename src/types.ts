@@ -8,6 +8,7 @@ export type ViewKey =
   | "ai"
   | "share"
   | "agent"
+  | "admin"
   | "settings";
 
 export type ThemeName = "草莓薄荷" | "理性机能" | "专业办公" | "宋韵文房" | "黑白系统";
@@ -85,6 +86,8 @@ export type MissionNode = {
 export type User = {
   id: number;
   username: string;
+  role?: "user" | "admin";
+  status?: "active" | "disabled";
   nickname: string | null;
   bio: string | null;
   avatar: string | null;

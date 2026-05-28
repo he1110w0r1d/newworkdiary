@@ -10,7 +10,7 @@ import { checkDatabase } from "./db";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { requireApiKey } from "./middleware/apiKeyAuth";
-import { requireAuth, JWT_SECRET, requireScope } from "./middleware/auth";
+import { requireAdmin, requireAuth, JWT_SECRET, requireScope } from "./middleware/auth";
 import { createMockSnapshot } from "./mockSnapshot";
 import {
   completePostgresMission,
@@ -43,9 +43,19 @@ import {
   findUserById,
   getPostgresSummary,
   updatePostgresUserProfile,
+  touchPostgresUserLogin,
+  recordPostgresUserActivity,
+  createPostgresFeedback,
+  listPostgresFeedbacks,
+  updatePostgresFeedback,
+  getPostgresAdminOverview,
+  listPostgresAdminUsers,
+  getPostgresAdminUserDetail,
   listPostgresAgentAuditLogs,
   type RestoreBackupInput,
   type RestoreStrategy,
+  type FeedbackStatus,
+  type FeedbackType,
 } from "./repositories/postgresRepository";
 import {
   createDiary,
@@ -183,16 +193,20 @@ app.post("/api/auth/register", async (request, response) => {
 
     // 自动登录，生成 token
     const token = jwt.sign(
-      { id: user.id, username: user.username },
+      { id: user.id, username: user.username, role: user.role },
       JWT_SECRET,
       { expiresIn: "30d" }
     );
+    await recordPostgresUserActivity(user.id, "auth.register", "user", user.id, { role: user.role });
+    await touchPostgresUserLogin(user.id);
 
     response.status(201).json({
       token,
       user: {
         id: user.id,
         username: user.username,
+        role: user.role,
+        status: user.status,
         nickname: user.nickname,
         bio: user.bio,
         avatar: user.avatar,
@@ -243,6 +257,12 @@ app.post("/api/auth/login", async (request, response) => {
       });
       return;
     }
+    if (user.status !== "active") {
+      response.status(403).json({
+        message: "该账号已被禁用",
+      });
+      return;
+    }
 
     // 支持旧的 DEMO 用户（如果密码匹配 demo-password-hash 并且未哈希过，兼容处理）
     let isMatch = false;
@@ -260,16 +280,19 @@ app.post("/api/auth/login", async (request, response) => {
     }
 
     const token = jwt.sign(
-      { id: user.id, username: user.username },
+      { id: user.id, username: user.username, role: user.role },
       JWT_SECRET,
       { expiresIn: "30d" }
     );
+    await touchPostgresUserLogin(user.id);
 
     response.json({
       token,
       user: {
         id: user.id,
         username: user.username,
+        role: user.role,
+        status: user.status,
         nickname: user.nickname,
         bio: user.bio,
         avatar: user.avatar,
@@ -288,6 +311,8 @@ app.get("/api/auth/me", requireAuth, async (request, response) => {
     response.json({
       id: 1,
       username: "demo",
+      role: "admin",
+      status: "active",
       nickname: "绵绵",
       bio: "作业本本地演示用户",
       avatar: "",
@@ -307,6 +332,8 @@ app.get("/api/auth/me", requireAuth, async (request, response) => {
     response.json({
       id: user.id,
       username: user.username,
+      role: user.role,
+      status: user.status,
       nickname: user.nickname,
       bio: user.bio,
       avatar: user.avatar,
@@ -315,6 +342,146 @@ app.get("/api/auth/me", requireAuth, async (request, response) => {
   } catch (error) {
     response.status(500).json({
       message: "获取用户信息失败",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.post("/api/feedbacks", requireAuth, async (request, response) => {
+  const payload = request.body as {
+    type?: FeedbackType;
+    title?: string;
+    content?: string;
+    contact?: string;
+  };
+  const type = isFeedbackType(payload.type) ? payload.type : "other";
+  const title = payload.title?.trim();
+  const content = payload.content?.trim();
+
+  if (!title || !content) {
+    response.status(400).json({ message: "title and content are required" });
+    return;
+  }
+
+  if (!usePostgres) {
+    response.status(503).json({ message: "DATABASE_URL 未配置，无法提交反馈" });
+    return;
+  }
+
+  try {
+    response.status(201).json(await createPostgresFeedback(request.user!.id, {
+      type,
+      title: title.slice(0, 120),
+      content: content.slice(0, 4000),
+      contact: payload.contact?.trim().slice(0, 200),
+    }));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to create feedback",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/overview", requireAuth, requireAdmin, async (_request, response) => {
+  try {
+    response.json(await getPostgresAdminOverview());
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load admin overview",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/users", requireAuth, requireAdmin, async (request, response) => {
+  try {
+    response.json(await listPostgresAdminUsers(String(request.query.search ?? ""), 100));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load admin users",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/users/:id", requireAuth, requireAdmin, async (request, response) => {
+  const id = Number(request.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    response.status(400).json({ message: "Invalid user id" });
+    return;
+  }
+
+  try {
+    const detail = await getPostgresAdminUserDetail(id);
+    if (!detail) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+    response.json(detail);
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load admin user detail",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/feedbacks", requireAuth, requireAdmin, async (request, response) => {
+  const status = isFeedbackStatus(request.query.status) ? request.query.status : undefined;
+  try {
+    response.json(await listPostgresFeedbacks(status, 100));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load feedbacks",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.patch("/api/admin/feedbacks/:id", requireAuth, requireAdmin, async (request, response) => {
+  const id = Number(request.params.id);
+  const payload = request.body as { status?: FeedbackStatus; adminNote?: string };
+  if (!Number.isInteger(id) || id <= 0) {
+    response.status(400).json({ message: "Invalid feedback id" });
+    return;
+  }
+  if (payload.status !== undefined && !isFeedbackStatus(payload.status)) {
+    response.status(400).json({ message: "Invalid feedback status" });
+    return;
+  }
+
+  try {
+    const feedback = await updatePostgresFeedback(id, {
+      status: payload.status,
+      adminNote: payload.adminNote?.trim().slice(0, 2000),
+    });
+    if (!feedback) {
+      response.status(404).json({ message: "Feedback not found" });
+      return;
+    }
+    response.json(feedback);
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to update feedback",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/audit-logs", requireAuth, requireAdmin, async (request, response) => {
+  const rawUserId = request.query.userId;
+  const userId = rawUserId === undefined ? undefined : Number(rawUserId);
+  if (userId !== undefined && (!Number.isInteger(userId) || userId <= 0)) {
+    response.status(400).json({ message: "Invalid user id" });
+    return;
+  }
+
+  try {
+    response.json(await listPostgresAgentAuditLogs(userId, 100));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load audit logs",
       detail: error instanceof Error ? error.message : "Unknown error",
     });
   }
@@ -1510,6 +1677,9 @@ app.post("/api/agent-review", requireAuth, async (request, response) => {
     const review = buildAgentReview(snapshot);
     const diary = usePostgres ? await createPostgresDiary(review.diary, request.user!.id) : createDiary(review.diary);
     const todo = usePostgres ? await createPostgresTodo(review.todo, request.user!.id) : createTodo(review.todo);
+    if (usePostgres) {
+      await recordPostgresUserActivity(request.user!.id, "agent_review.create", "diary", diary.id, { todoId: todo.id });
+    }
 
     response.status(201).json({
       diary,
@@ -1547,6 +1717,7 @@ app.post("/api/diaries", requireAuth, requireScope("diary:write"), async (reques
 
   try {
     const diary = await createPostgresDiary(diaryPayload, request.user!.id);
+    await recordPostgresUserActivity(request.user!.id, "diary.create", "diary", diary.id, { source: diary.source });
     if (request.apiKey) {
       await recordAuditLog({
         key: request.apiKey,
@@ -1770,6 +1941,7 @@ app.post("/api/todos", requireAuth, requireScope("todo:write"), async (request, 
 
   try {
     const todo = await createPostgresTodo(todoPayload, request.user!.id);
+    await recordPostgresUserActivity(request.user!.id, "todo.create", "todo", todo.id);
     if (request.apiKey) {
       await recordAuditLog({
         key: request.apiKey,
@@ -1930,6 +2102,8 @@ app.put("/api/settings/profile", requireAuth, async (request, response) => {
     response.json({
       id: user.id,
       username: user.username,
+      role: user.role,
+      status: user.status,
       nickname: user.nickname,
       bio: user.bio,
       avatar: user.avatar,
@@ -2126,6 +2300,7 @@ app.post("/api/summaries", requireAuth, requireScope("summary:write"), async (re
     const workProfile = user?.work_profile ? (user.work_profile as Record<string, any>) : undefined;
 
     const result = await generateSummaryAndRegisterTodos(config, request.user!.id, type, date, workProfile);
+    await recordPostgresUserActivity(request.user!.id, "summary.create", "summary", result.summary?.id ?? null, { type, date });
     response.json(result);
   } catch (error) {
     response.status(503).json({
@@ -2283,6 +2458,7 @@ app.post("/api/share-cards", requireAuth, async (request, response) => {
       expiry,
       origin: request.get("origin"),
     });
+    await recordPostgresUserActivity(request.user!.id, "share_card.create", "share_card", card.id, { visibility, expiry });
 
     response.status(201).json({
       ...card,
@@ -2455,6 +2631,14 @@ function isValidRestoreModelConfig(config: Partial<ModelServiceConfig>) {
     Number.isFinite(config.timeoutSeconds) &&
     config.timeoutSeconds > 0
   );
+}
+
+function isFeedbackType(value: unknown): value is FeedbackType {
+  return value === "bug" || value === "suggestion" || value === "usage" || value === "model" || value === "other";
+}
+
+function isFeedbackStatus(value: unknown): value is FeedbackStatus {
+  return value === "open" || value === "processing" || value === "resolved" || value === "closed";
 }
 
 async function testModelPart(check: () => Promise<string>) {

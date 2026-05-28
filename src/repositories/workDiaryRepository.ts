@@ -105,6 +105,69 @@ export type AgentApiKeyListItem = {
   created_at: string;
 };
 
+export type FeedbackType = "bug" | "suggestion" | "usage" | "model" | "other";
+export type FeedbackStatus = "open" | "processing" | "resolved" | "closed";
+
+export type FeedbackItem = {
+  id: number;
+  user_id: number | null;
+  username: string | null;
+  type: FeedbackType;
+  status: FeedbackStatus;
+  title: string;
+  content: string;
+  contact: string | null;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AdminOverviewResponse = {
+  totals: {
+    users: number;
+    activeUsers7d: number;
+    newUsersToday: number;
+    newUsers7d: number;
+    newUsers30d: number;
+    diaries: number;
+    agentDiaries: number;
+    todos: number;
+    summaries: number;
+    shareCards: number;
+    openFeedbacks: number;
+  };
+  daily: Array<{
+    date: string;
+    newUsers: number;
+    activeUsers: number;
+    diaries: number;
+    agentDiaries: number;
+    todos: number;
+    summaries: number;
+    shareCards: number;
+    feedbacks: number;
+  }>;
+};
+
+export type AdminUserListItem = {
+  id: number;
+  username: string;
+  nickname: string | null;
+  role: "user" | "admin";
+  status: "active" | "disabled";
+  created_at: string;
+  last_login_at: string | null;
+  diary_count: number;
+  agent_diary_count: number;
+  todo_count: number;
+  api_key_count: number;
+  share_card_count: number;
+  mission_count: number;
+  summary_count: number;
+  has_llm_config: boolean;
+  has_embedding_config: boolean;
+};
+
 export type TodoStatusHistoryItem = {
   id: number;
   todo_id: number;
@@ -353,4 +416,42 @@ export async function updateUserProfile(payload: {
     method: "PUT",
     body: payload,
   });
+}
+
+export async function createFeedback(payload: {
+  type: FeedbackType;
+  title: string;
+  content: string;
+  contact?: string;
+}) {
+  return apiRequest<FeedbackItem>("/feedbacks", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function getAdminOverview() {
+  return apiRequest<AdminOverviewResponse>("/admin/overview");
+}
+
+export async function listAdminUsers(search = "") {
+  const query = search ? `?search=${encodeURIComponent(search)}` : "";
+  return apiRequest<AdminUserListItem[]>(`/admin/users${query}`);
+}
+
+export async function listAdminFeedbacks(status?: FeedbackStatus) {
+  const query = status ? `?status=${encodeURIComponent(status)}` : "";
+  return apiRequest<FeedbackItem[]>(`/admin/feedbacks${query}`);
+}
+
+export async function updateAdminFeedback(id: number, patch: { status?: FeedbackStatus; adminNote?: string }) {
+  return apiRequest<FeedbackItem>(`/admin/feedbacks/${id}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function listAdminAuditLogs(userId?: number) {
+  const query = userId ? `?userId=${userId}` : "";
+  return apiRequest<AgentAuditLogRow[]>(`/admin/audit-logs${query}`);
 }

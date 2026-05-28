@@ -11,7 +11,13 @@ async function migrate() {
     throw new Error("DATABASE_URL is required to run migrations.");
   }
 
-  const migrationFiles = ["001_init.sql", "002_seed_demo.sql", "003_mission_parent.sql", "004_todo_mission.sql"];
+  const migrationFiles = [
+    "001_init.sql",
+    "002_seed_demo.sql",
+    "003_mission_parent.sql",
+    "004_todo_mission.sql",
+    "005_admin_feedback.sql",
+  ];
 
   for (const file of migrationFiles) {
     const sqlPath = path.join(__dirname, "sql", file);

@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Trash2,
   Upload,
+  Users,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -79,11 +80,22 @@ import {
   updateModelConfig,
   updateTodoText,
   applyRestoreBackup,
+  createFeedback,
+  getAdminOverview,
+  listAdminAuditLogs,
+  listAdminFeedbacks,
+  listAdminUsers,
   updateUserProfile,
   listAgentAuditLogs,
   type AgentAuditLogRow,
+  type AdminOverviewResponse,
+  type AdminUserListItem,
+  type FeedbackItem,
+  type FeedbackStatus,
+  type FeedbackType,
   type ModelConnectionTestResponse,
   testModelConnection,
+  updateAdminFeedback,
 } from "./repositories/workDiaryRepository";
 import "./styles.css";
 import type { DiaryEntry, Mission, MissionNode, ModelServiceConfig, SearchResult, StatItem, ThemeName, TodoItem, ViewKey, User } from "./types";
@@ -744,7 +756,7 @@ function App() {
   return (
     <main className="app-shell" data-theme={themeToKey(selectedTheme)}>
       <canvas id="confetti-canvas" ref={confettiCanvasRef} />
-      <Sidebar activeView={activeView} onChangeView={setActiveView} />
+      <Sidebar activeView={activeView} currentUser={currentUser} onChangeView={setActiveView} />
       <section className="workspace">
         <Topbar
           query={searchQuery}
@@ -794,6 +806,7 @@ function App() {
           />
         )}
         {activeView === "agent" && <AgentKeyView onAgentKeysChanged={loadAgentConnectionCount} />}
+        {activeView === "admin" && currentUser?.role === "admin" && <AdminView />}
         {activeView === "todos" && (
           <TodosView
             todoItems={todoItems}
@@ -856,6 +869,7 @@ function App() {
         {activeView !== "dashboard" &&
           activeView !== "diary" &&
           activeView !== "agent" &&
+          activeView !== "admin" &&
           activeView !== "todos" &&
           activeView !== "share" &&
           activeView !== "missions" &&
@@ -985,9 +999,11 @@ function DashboardView({
 
 function Sidebar({
   activeView,
+  currentUser,
   onChangeView,
 }: {
   activeView: ViewKey;
+  currentUser: User | null;
   onChangeView: (view: ViewKey) => void;
 }) {
   const navItems = [
@@ -998,6 +1014,7 @@ function Sidebar({
     { icon: Bot, label: "AI 回顾", view: "ai" },
     { icon: Image, label: "分享卡片", view: "share" },
     { icon: KeyRound, label: "Agent Key", view: "agent" },
+    ...(currentUser?.role === "admin" ? [{ icon: ShieldCheck, label: "后台", view: "admin" }] : []),
     { icon: Settings, label: "设置", view: "settings" },
   ];
 
@@ -3442,6 +3459,179 @@ function ShareQr({ value }: { value: string }) {
   return <div className="share-qr" aria-label="分享二维码" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
+function AdminView() {
+  const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
+  const [users, setUsers] = useState<AdminUserListItem[]>([]);
+  const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AgentAuditLogRow[]>([]);
+  const [userSearch, setUserSearch] = useState("");
+  const [feedbackFilter, setFeedbackFilter] = useState<FeedbackStatus | "all">("all");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const loadAdminData = useCallback(async () => {
+    setIsLoading(true);
+    setError("");
+    try {
+      const [nextOverview, nextUsers, nextFeedbacks, nextAuditLogs] = await Promise.all([
+        getAdminOverview(),
+        listAdminUsers(userSearch),
+        listAdminFeedbacks(feedbackFilter === "all" ? undefined : feedbackFilter),
+        listAdminAuditLogs(),
+      ]);
+      setOverview(nextOverview);
+      setUsers(nextUsers);
+      setFeedbacks(nextFeedbacks);
+      setAuditLogs(nextAuditLogs);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "后台数据加载失败");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [feedbackFilter, userSearch]);
+
+  useEffect(() => {
+    void loadAdminData();
+  }, [loadAdminData]);
+
+  async function updateFeedbackStatus(id: number, status: FeedbackStatus) {
+    try {
+      const updated = await updateAdminFeedback(id, { status });
+      setFeedbacks((current) => current.map((item) => (item.id === id ? updated : item)));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "反馈状态更新失败");
+    }
+  }
+
+  const totals = overview?.totals;
+  const adminStats: StatItem[] = [
+    { label: "总用户", value: String(totals?.users ?? 0), icon: Users },
+    { label: "今日新增", value: String(totals?.newUsersToday ?? 0), icon: Plus },
+    { label: "7日活跃", value: String(totals?.activeUsers7d ?? 0), icon: Sparkles },
+    { label: "待处理反馈", value: String(totals?.openFeedbacks ?? 0), icon: MessageSquareText },
+  ];
+
+  return (
+    <section className="page-stack">
+      <PageHeader
+        eyebrow="Admin Console"
+        title="后台管理"
+        copy="查看用户增长、使用频率、反馈处理和 Agent 调用审计。"
+      >
+        <button className="soft-btn" onClick={() => void loadAdminData()}>
+          <RefreshCw size={18} />
+          {isLoading ? "刷新中..." : "刷新"}
+        </button>
+      </PageHeader>
+      {error && <p className="error-text">{error}</p>}
+      <StatsGrid stats={adminStats} />
+      <div className="admin-grid">
+        <section className="panel admin-wide">
+          <PanelTitle icon={<CalendarDays size={18} />} title="近 14 天趋势" action="Daily" />
+          <div className="admin-daily-grid">
+            {(overview?.daily ?? []).map((day) => (
+              <article className="admin-daily-card" key={day.date}>
+                <strong>{day.date.slice(5)}</strong>
+                <span>新增 {day.newUsers}</span>
+                <span>活跃 {day.activeUsers}</span>
+                <span>日记 {day.diaries}</span>
+                <span>反馈 {day.feedbacks}</span>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="panel admin-wide">
+          <PanelTitle icon={<Users size={18} />} title="用户列表" action={`${users.length} 人`} />
+          <div className="inline-form admin-search">
+            <input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="搜索用户名或昵称" />
+            <button className="soft-btn" onClick={() => void loadAdminData()}>
+              搜索
+            </button>
+          </div>
+          <div className="admin-table">
+            {users.map((user) => (
+              <article className="admin-user-row" key={user.id}>
+                <div>
+                  <strong>{user.nickname || user.username}</strong>
+                  <span>@{user.username} · {user.role} · {user.status}</span>
+                  <span>注册 {formatDateTime(user.created_at)} · 最近登录 {user.last_login_at ? formatDateTime(user.last_login_at) : "暂无"}</span>
+                </div>
+                <div className="admin-user-metrics">
+                  <span>日记 {user.diary_count}</span>
+                  <span>Agent {user.agent_diary_count}</span>
+                  <span>待办 {user.todo_count}</span>
+                  <span>Key {user.api_key_count}</span>
+                  <span>分享 {user.share_card_count}</span>
+                  <span>{user.has_llm_config ? "LLM 已配" : "LLM 未配"}</span>
+                  <span>{user.has_embedding_config ? "Embedding 已配" : "Embedding 未配"}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelTitle icon={<MessageSquareText size={18} />} title="问题反馈" action={`${feedbacks.length} 条`} />
+          <div className="mission-archive-filters">
+            {(["all", "open", "processing", "resolved", "closed"] as const).map((status) => (
+              <button
+                key={status}
+                className={feedbackFilter === status ? "active" : ""}
+                onClick={() => setFeedbackFilter(status)}
+              >
+                {status === "all" ? "全部" : status}
+              </button>
+            ))}
+          </div>
+          <div className="admin-feedback-list">
+            {feedbacks.length > 0 ? (
+              feedbacks.map((feedback) => (
+                <article className="admin-feedback-card" key={feedback.id}>
+                  <strong>{feedback.title}</strong>
+                  <p>{feedback.content}</p>
+                  <span>{feedback.type} · {feedback.status} · {feedback.username ?? "匿名"}</span>
+                  <div>
+                    {(["open", "processing", "resolved", "closed"] as const).map((status) => (
+                      <button className="mini-danger-btn" key={status} onClick={() => void updateFeedbackStatus(feedback.id, status)}>
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </article>
+              ))
+            ) : (
+              <div className="key-empty">
+                <MessageSquareText size={22} />
+                <strong>暂无反馈</strong>
+                <p>用户提交的问题和建议会显示在这里。</p>
+              </div>
+            )}
+          </div>
+        </section>
+        <section className="panel">
+          <PanelTitle icon={<TerminalSquare size={18} />} title="Agent 调用审计" action={`${auditLogs.length} 条`} />
+          <div className="admin-audit-list">
+            {auditLogs.length > 0 ? (
+              auditLogs.map((log) => (
+                <article className="admin-audit-row" key={log.id}>
+                  <strong>{log.action}</strong>
+                  <span>{log.agent_name ?? "Agent"} · {log.key_mask ?? "key"} · {formatDateTime(log.created_at)}</span>
+                  <p>{log.target_type ?? "target"} #{log.target_id ?? "-"}</p>
+                </article>
+              ))
+            ) : (
+              <div className="key-empty">
+                <TerminalSquare size={22} />
+                <strong>暂无审计记录</strong>
+                <p>Agent 通过 API Key 操作后会留下审计记录。</p>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
 function PublicSharePage({ token }: { token: string }) {
   const [card, setCard] = useState<ShareCardResponse | null>(null);
   const [error, setError] = useState("");
@@ -3570,6 +3760,11 @@ function SettingsView({
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profileSuccess, setProfileSuccess] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>("bug");
+  const [feedbackTitle, setFeedbackTitle] = useState("");
+  const [feedbackContent, setFeedbackContent] = useState("");
+  const [feedbackContact, setFeedbackContact] = useState("");
+  const [feedbackStatusText, setFeedbackStatusText] = useState("");
 
   useEffect(() => {
     if (currentUser) {
@@ -3604,6 +3799,28 @@ function SettingsView({
       setProfileError(error instanceof Error ? error.message : "保存个人资料失败");
     } finally {
       setIsSavingProfile(false);
+    }
+  }
+
+  async function submitFeedback() {
+    if (!feedbackTitle.trim() || !feedbackContent.trim()) {
+      setFeedbackStatusText("请填写反馈标题和具体内容");
+      return;
+    }
+
+    try {
+      await createFeedback({
+        type: feedbackType,
+        title: feedbackTitle.trim(),
+        content: feedbackContent.trim(),
+        contact: feedbackContact.trim() || undefined,
+      });
+      setFeedbackTitle("");
+      setFeedbackContent("");
+      setFeedbackContact("");
+      setFeedbackStatusText("反馈已提交，管理员会在后台处理。");
+    } catch (error) {
+      setFeedbackStatusText(error instanceof Error ? error.message : "反馈提交失败");
     }
   }
 
@@ -3892,6 +4109,55 @@ function SettingsView({
               <CheckCircle2 size={18} />
               {isSavingProfile ? "保存中..." : "保存画像配置"}
             </button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <PanelTitle icon={<MessageSquareText size={18} />} title="问题反馈" action="Feedback" />
+          <div className="model-config-form">
+            <label>
+              类型
+              <select
+                value={feedbackType}
+                onChange={(event) => setFeedbackType(event.target.value as FeedbackType)}
+              >
+                <option value="bug">Bug</option>
+                <option value="suggestion">功能建议</option>
+                <option value="usage">使用问题</option>
+                <option value="model">模型问题</option>
+                <option value="other">其他</option>
+              </select>
+            </label>
+            <label>
+              标题
+              <input
+                value={feedbackTitle}
+                onChange={(event) => setFeedbackTitle(event.target.value)}
+                placeholder="一句话说明问题"
+              />
+            </label>
+            <label>
+              具体内容
+              <textarea
+                value={feedbackContent}
+                rows={5}
+                onChange={(event) => setFeedbackContent(event.target.value)}
+                placeholder="描述复现步骤、期望结果或你的建议"
+              />
+            </label>
+            <label>
+              联系方式（可选）
+              <input
+                value={feedbackContact}
+                onChange={(event) => setFeedbackContact(event.target.value)}
+                placeholder="邮箱 / 微信 / 其他联系方式"
+              />
+            </label>
+            <button className="primary-btn" onClick={() => void submitFeedback()}>
+              <MessageSquareText size={18} />
+              提交反馈
+            </button>
+            {feedbackStatusText && <p className="success-text">{feedbackStatusText}</p>}
           </div>
         </section>
 
@@ -4308,6 +4574,7 @@ function PlaceholderView({ view }: { view: ViewKey }) {
     ai: "AI 回顾",
     share: "分享卡片",
     agent: "Agent Key",
+    admin: "后台",
     settings: "设置",
   };
 

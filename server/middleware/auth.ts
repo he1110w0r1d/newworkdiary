@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { findApiKey, type ApiKeyRecord, hasScope } from "../services/apiKeys";
+import { findUserById } from "../repositories/postgresRepository";
 
 declare global {
   namespace Express {
@@ -8,6 +9,7 @@ declare global {
       user?: {
         id: number;
         username: string;
+        role?: string;
       };
       apiKey?: ApiKeyRecord;
     }
@@ -39,7 +41,7 @@ export async function requireAuth(request: Request, response: Response, next: Ne
     const token = parts[1];
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string };
+      const decoded = jwt.verify(token, JWT_SECRET) as { id: number; username: string; role?: string };
       request.user = decoded;
       next();
     } catch (error) {
@@ -89,4 +91,23 @@ export function requireScope(requiredScope: string | string[]) {
     }
     next();
   };
+}
+
+export async function requireAdmin(request: Request, response: Response, next: NextFunction) {
+  if (!request.user?.id) {
+    response.status(401).json({ message: "Admin authentication required" });
+    return;
+  }
+
+  try {
+    const user = await findUserById(request.user.id);
+    if (!user || user.status !== "active" || user.role !== "admin") {
+      response.status(403).json({ message: "Admin permission required" });
+      return;
+    }
+    request.user = { id: user.id, username: user.username, role: user.role };
+    next();
+  } catch (error) {
+    response.status(500).json({ message: "Admin authentication error" });
+  }
 }

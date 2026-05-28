@@ -1241,19 +1241,34 @@ h1 {
   font-weight: 800;
 }
 
-.model-config-form input {
+.model-config-form input,
+.model-config-form select,
+.model-config-form textarea {
   min-width: 0;
   width: 100%;
-  min-height: 40px;
   border: 1px solid rgba(237, 95, 159, 0.18);
   border-radius: 12px;
-  padding: 0 12px;
   outline: 0;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.78);
 }
 
-.model-config-form input:focus {
+.model-config-form input,
+.model-config-form select {
+  min-height: 40px;
+  padding: 0 12px;
+}
+
+.model-config-form textarea {
+  min-height: 118px;
+  padding: 12px;
+  resize: vertical;
+  line-height: 1.65;
+}
+
+.model-config-form input:focus,
+.model-config-form select:focus,
+.model-config-form textarea:focus {
   border-color: rgba(237, 95, 159, 0.56);
   box-shadow: 0 0 0 4px rgba(255, 143, 189, 0.12);
 }
@@ -3558,6 +3573,110 @@ h1 {
   text-align: center;
 }
 
+.admin-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: 16px;
+}
+
+.admin-wide {
+  grid-column: 1 / -1;
+}
+
+.admin-daily-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.admin-daily-card,
+.admin-user-row,
+.admin-feedback-card,
+.admin-audit-row {
+  padding: 12px;
+  border: 1px solid rgba(237, 95, 159, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.admin-daily-card {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-daily-card strong,
+.admin-user-row strong,
+.admin-feedback-card strong,
+.admin-audit-row strong {
+  color: var(--ink);
+}
+
+.admin-daily-card span,
+.admin-user-row span,
+.admin-feedback-card span,
+.admin-audit-row span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-table,
+.admin-feedback-list,
+.admin-audit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-search {
+  margin-bottom: 12px;
+}
+
+.admin-user-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.admin-user-row div,
+.admin-audit-row {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-user-metrics {
+  display: flex !important;
+  flex-wrap: wrap;
+  align-content: start;
+  gap: 6px;
+}
+
+.admin-user-metrics span {
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--mint-deep);
+  background: rgba(231, 251, 243, 0.78);
+}
+
+.admin-feedback-card {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-feedback-card p,
+.admin-audit-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.admin-feedback-card div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .public-access-form {
   width: min(320px, 100%);
   display: grid;
@@ -3732,6 +3851,7 @@ h1 {
   .settings-grid,
   .mission-page-grid,
   .ai-grid,
+  .admin-grid,
   .diary-page-list {
     grid-template-columns: 1fr;
   }
@@ -4041,7 +4161,8 @@ h1 {
   .mission-evidence-grid,
   .mission-achievement-card,
   .mission-wall,
-  .mission-wall-timeline {
+  .mission-wall-timeline,
+  .admin-user-row {
     grid-template-columns: 1fr;
   }
 

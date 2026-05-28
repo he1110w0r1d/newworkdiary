@@ -1649,12 +1649,15 @@ export type DbUser = {
   id: number;
   username: string;
   password_hash: string;
+  role: "user" | "admin";
+  status: "active" | "disabled";
   nickname: string | null;
   bio: string | null;
   avatar: string | null;
   work_profile: Record<string, any> | null;
   llm_configs: any[] | null;
   embedding_configs: any[] | null;
+  last_login_at: Date | null;
   created_at: Date;
   updated_at: Date;
 };
@@ -1667,14 +1670,16 @@ export async function createUser(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const countResult = await client.query<{ count: string }>("SELECT COUNT(*)::text AS count FROM users");
+    const role = Number(countResult.rows[0]?.count ?? 0) === 0 ? "admin" : "user";
     
     const userResult = await client.query<DbUser>(
       `
-        INSERT INTO users (username, password_hash, nickname)
-        VALUES ($1, $2, $3)
-        RETURNING id, username, password_hash, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, created_at, updated_at
+        INSERT INTO users (username, password_hash, nickname, role)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, username, password_hash, role, status, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, last_login_at, created_at, updated_at
       `,
-      [username, passwordHash, nickname ?? username],
+      [username, passwordHash, nickname ?? username, role],
     );
     
     const user = userResult.rows[0];
@@ -1701,7 +1706,7 @@ export async function createUser(
 export async function findUserByUsername(username: string): Promise<DbUser | null> {
   const result = await pool.query<DbUser>(
     `
-      SELECT id, username, password_hash, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, created_at, updated_at
+      SELECT id, username, password_hash, role, status, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, last_login_at, created_at, updated_at
       FROM users
       WHERE username = $1
     `,
@@ -1713,7 +1718,7 @@ export async function findUserByUsername(username: string): Promise<DbUser | nul
 export async function findUserById(id: number): Promise<DbUser | null> {
   const result = await pool.query<DbUser>(
     `
-      SELECT id, username, password_hash, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, created_at, updated_at
+      SELECT id, username, password_hash, role, status, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, last_login_at, created_at, updated_at
       FROM users
       WHERE id = $1
     `,
@@ -1762,11 +1767,373 @@ export async function updatePostgresUserProfile(
     UPDATE users
     SET ${fields.join(", ")}, updated_at = CURRENT_TIMESTAMP
     WHERE id = $${paramIndex}
-    RETURNING id, username, password_hash, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, created_at, updated_at
+    RETURNING id, username, password_hash, role, status, nickname, bio, avatar, work_profile, llm_configs, embedding_configs, last_login_at, created_at, updated_at
   `;
 
   const result = await pool.query<DbUser>(query, values);
   return result.rows[0] ?? null;
+}
+
+export async function touchPostgresUserLogin(userId: number) {
+  await pool.query(
+    `
+      UPDATE users
+      SET last_login_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+    `,
+    [userId],
+  );
+  await recordPostgresUserActivity(userId, "auth.login", "user", userId);
+}
+
+export async function recordPostgresUserActivity(
+  userId: number | null,
+  eventType: string,
+  targetType?: string,
+  targetId?: number | null,
+  meta: Record<string, any> = {},
+) {
+  await pool.query(
+    `
+      INSERT INTO user_activity_events (user_id, event_type, target_type, target_id, meta)
+      VALUES ($1, $2, $3, $4, $5::jsonb)
+    `,
+    [userId, eventType, targetType ?? null, targetId ?? null, JSON.stringify(meta)],
+  );
+}
+
+export type FeedbackStatus = "open" | "processing" | "resolved" | "closed";
+export type FeedbackType = "bug" | "suggestion" | "usage" | "model" | "other";
+
+export type FeedbackRow = {
+  id: number;
+  user_id: number | null;
+  username: string | null;
+  type: FeedbackType;
+  status: FeedbackStatus;
+  title: string;
+  content: string;
+  contact: string | null;
+  admin_note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function createPostgresFeedback(
+  userId: number | null,
+  payload: { type: FeedbackType; title: string; content: string; contact?: string },
+): Promise<FeedbackRow> {
+  const result = await pool.query<FeedbackRow>(
+    `
+      INSERT INTO feedbacks (user_id, type, title, content, contact)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, created_at::text, updated_at::text
+    `,
+    [userId, payload.type, payload.title, payload.content, payload.contact ?? null],
+  );
+  await recordPostgresUserActivity(userId, "feedback.create", "feedback", result.rows[0].id, { type: payload.type });
+  return result.rows[0];
+}
+
+export async function listPostgresFeedbacks(status?: FeedbackStatus, limit = 100): Promise<FeedbackRow[]> {
+  const values: any[] = [];
+  const where = status ? "WHERE feedbacks.status = $1" : "";
+  if (status) values.push(status);
+  values.push(limit);
+  const result = await pool.query<FeedbackRow>(
+    `
+      SELECT
+        feedbacks.id,
+        feedbacks.user_id,
+        users.username,
+        feedbacks.type,
+        feedbacks.status,
+        feedbacks.title,
+        feedbacks.content,
+        feedbacks.contact,
+        feedbacks.admin_note,
+        feedbacks.created_at::text,
+        feedbacks.updated_at::text
+      FROM feedbacks
+      LEFT JOIN users ON users.id = feedbacks.user_id
+      ${where}
+      ORDER BY feedbacks.created_at DESC, feedbacks.id DESC
+      LIMIT $${values.length}
+    `,
+    values,
+  );
+  return result.rows;
+}
+
+export async function updatePostgresFeedback(
+  id: number,
+  patch: { status?: FeedbackStatus; adminNote?: string },
+): Promise<FeedbackRow | null> {
+  const result = await pool.query<FeedbackRow>(
+    `
+      UPDATE feedbacks
+      SET status = COALESCE($2, status),
+          admin_note = COALESCE($3, admin_note),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, created_at::text, updated_at::text
+    `,
+    [id, patch.status ?? null, patch.adminNote ?? null],
+  );
+  return result.rows[0] ?? null;
+}
+
+export type AdminOverview = {
+  totals: {
+    users: number;
+    activeUsers7d: number;
+    newUsersToday: number;
+    newUsers7d: number;
+    newUsers30d: number;
+    diaries: number;
+    agentDiaries: number;
+    todos: number;
+    summaries: number;
+    shareCards: number;
+    openFeedbacks: number;
+  };
+  daily: Array<{
+    date: string;
+    newUsers: number;
+    activeUsers: number;
+    diaries: number;
+    agentDiaries: number;
+    todos: number;
+    summaries: number;
+    shareCards: number;
+    feedbacks: number;
+  }>;
+};
+
+export type AdminUserListItem = {
+  id: number;
+  username: string;
+  nickname: string | null;
+  role: "user" | "admin";
+  status: "active" | "disabled";
+  created_at: string;
+  last_login_at: string | null;
+  diary_count: number;
+  agent_diary_count: number;
+  todo_count: number;
+  api_key_count: number;
+  share_card_count: number;
+  mission_count: number;
+  summary_count: number;
+  has_llm_config: boolean;
+  has_embedding_config: boolean;
+};
+
+export async function getPostgresAdminOverview(): Promise<AdminOverview> {
+  const [totalsResult, dailyResult] = await Promise.all([
+    pool.query<{
+      users: string;
+      active_users_7d: string;
+      new_users_today: string;
+      new_users_7d: string;
+      new_users_30d: string;
+      diaries: string;
+      agent_diaries: string;
+      todos: string;
+      summaries: string;
+      share_cards: string;
+      open_feedbacks: string;
+    }>(
+      `
+        SELECT
+          (SELECT COUNT(*) FROM users)::text AS users,
+          (
+            SELECT COUNT(DISTINCT user_id)
+            FROM user_activity_events
+            WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
+              AND user_id IS NOT NULL
+          )::text AS active_users_7d,
+          (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE)::text AS new_users_today,
+          (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '6 days')::text AS new_users_7d,
+          (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '29 days')::text AS new_users_30d,
+          (SELECT COUNT(*) FROM diaries WHERE is_deleted = FALSE)::text AS diaries,
+          (SELECT COUNT(*) FROM diaries WHERE is_deleted = FALSE AND source_type = 'agent')::text AS agent_diaries,
+          (SELECT COUNT(*) FROM todos)::text AS todos,
+          (SELECT COUNT(*) FROM summaries)::text AS summaries,
+          (SELECT COUNT(*) FROM share_cards)::text AS share_cards,
+          (SELECT COUNT(*) FROM feedbacks WHERE status IN ('open', 'processing'))::text AS open_feedbacks
+      `,
+    ),
+    pool.query<{
+      day: string;
+      new_users: string;
+      active_users: string;
+      diaries: string;
+      agent_diaries: string;
+      todos: string;
+      summaries: string;
+      share_cards: string;
+      feedbacks: string;
+    }>(
+      `
+        WITH days AS (
+          SELECT generate_series(CURRENT_DATE - INTERVAL '13 days', CURRENT_DATE, INTERVAL '1 day')::date AS day
+        )
+        SELECT
+          days.day::text AS day,
+          COALESCE(new_users.count, 0)::text AS new_users,
+          COALESCE(active_users.count, 0)::text AS active_users,
+          COALESCE(diaries.count, 0)::text AS diaries,
+          COALESCE(agent_diaries.count, 0)::text AS agent_diaries,
+          COALESCE(todos.count, 0)::text AS todos,
+          COALESCE(summaries.count, 0)::text AS summaries,
+          COALESCE(share_cards.count, 0)::text AS share_cards,
+          COALESCE(feedbacks.count, 0)::text AS feedbacks
+        FROM days
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM users WHERE created_at::date = days.day
+        ) new_users ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(DISTINCT user_id) AS count
+          FROM user_activity_events
+          WHERE created_at::date = days.day AND user_id IS NOT NULL
+        ) active_users ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM diaries WHERE created_at::date = days.day AND is_deleted = FALSE
+        ) diaries ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM diaries WHERE created_at::date = days.day AND is_deleted = FALSE AND source_type = 'agent'
+        ) agent_diaries ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM todos WHERE created_at::date = days.day
+        ) todos ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM summaries WHERE created_at::date = days.day
+        ) summaries ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM share_cards WHERE created_at::date = days.day
+        ) share_cards ON true
+        LEFT JOIN LATERAL (
+          SELECT COUNT(*) AS count FROM feedbacks WHERE created_at::date = days.day
+        ) feedbacks ON true
+        ORDER BY days.day
+      `,
+    ),
+  ]);
+
+  const totals = totalsResult.rows[0];
+  const number = (value?: string) => Number(value ?? 0);
+  return {
+    totals: {
+      users: number(totals?.users),
+      activeUsers7d: number(totals?.active_users_7d),
+      newUsersToday: number(totals?.new_users_today),
+      newUsers7d: number(totals?.new_users_7d),
+      newUsers30d: number(totals?.new_users_30d),
+      diaries: number(totals?.diaries),
+      agentDiaries: number(totals?.agent_diaries),
+      todos: number(totals?.todos),
+      summaries: number(totals?.summaries),
+      shareCards: number(totals?.share_cards),
+      openFeedbacks: number(totals?.open_feedbacks),
+    },
+    daily: dailyResult.rows.map((row) => ({
+      date: row.day,
+      newUsers: number(row.new_users),
+      activeUsers: number(row.active_users),
+      diaries: number(row.diaries),
+      agentDiaries: number(row.agent_diaries),
+      todos: number(row.todos),
+      summaries: number(row.summaries),
+      shareCards: number(row.share_cards),
+      feedbacks: number(row.feedbacks),
+    })),
+  };
+}
+
+export async function listPostgresAdminUsers(search = "", limit = 100): Promise<AdminUserListItem[]> {
+  const trimmedSearch = search.trim().toLowerCase();
+  const result = await pool.query<any>(
+    `
+      SELECT
+        users.id,
+        users.username,
+        users.nickname,
+        users.role,
+        users.status,
+        users.created_at::text,
+        users.last_login_at::text,
+        COUNT(DISTINCT diaries.id)::int AS diary_count,
+        COUNT(DISTINCT diaries.id) FILTER (WHERE diaries.source_type = 'agent')::int AS agent_diary_count,
+        COUNT(DISTINCT todos.id)::int AS todo_count,
+        COUNT(DISTINCT api_keys.id)::int AS api_key_count,
+        COUNT(DISTINCT share_cards.id)::int AS share_card_count,
+        COUNT(DISTINCT mission_timelines.id)::int AS mission_count,
+        COUNT(DISTINCT summaries.id)::int AS summary_count,
+        (jsonb_array_length(COALESCE(users.llm_configs, '[]'::jsonb)) > 0) AS has_llm_config,
+        (jsonb_array_length(COALESCE(users.embedding_configs, '[]'::jsonb)) > 0) AS has_embedding_config
+      FROM users
+      LEFT JOIN diaries ON diaries.user_id = users.id AND diaries.is_deleted = FALSE
+      LEFT JOIN todos ON todos.user_id = users.id
+      LEFT JOIN api_keys ON api_keys.user_id = users.id
+      LEFT JOIN share_cards ON share_cards.user_id = users.id
+      LEFT JOIN mission_timelines ON mission_timelines.user_id = users.id
+      LEFT JOIN summaries ON summaries.user_id = users.id
+      WHERE ($1 = '' OR LOWER(users.username) LIKE '%' || $1 || '%' OR LOWER(COALESCE(users.nickname, '')) LIKE '%' || $1 || '%')
+      GROUP BY users.id
+      ORDER BY users.created_at DESC, users.id DESC
+      LIMIT $2
+    `,
+    [trimmedSearch, limit],
+  );
+  return result.rows;
+}
+
+export async function getPostgresAdminUserDetail(userId: number) {
+  const [userResult, activityResult, auditResult] = await Promise.all([
+    pool.query<any>(
+      `
+        SELECT *
+        FROM (
+          SELECT
+            users.id,
+            users.username,
+            users.nickname,
+            users.role,
+            users.status,
+            users.bio,
+            users.avatar,
+            users.work_profile,
+            users.created_at::text,
+            users.last_login_at::text,
+            jsonb_array_length(COALESCE(users.llm_configs, '[]'::jsonb)) AS llm_config_count,
+            jsonb_array_length(COALESCE(users.embedding_configs, '[]'::jsonb)) AS embedding_config_count
+          FROM users
+          WHERE users.id = $1
+        ) user_row
+      `,
+      [userId],
+    ),
+    pool.query(
+      `
+        SELECT id, event_type, target_type, target_id, meta, created_at::text
+        FROM user_activity_events
+        WHERE user_id = $1
+        ORDER BY created_at DESC, id DESC
+        LIMIT 50
+      `,
+      [userId],
+    ),
+    listPostgresAgentAuditLogs(userId, 50),
+  ]);
+
+  if (!userResult.rows[0]) return null;
+  return {
+    user: userResult.rows[0],
+    activities: activityResult.rows,
+    auditLogs: auditResult,
+  };
 }
 
 export interface AgentAuditLogRow {
@@ -1780,7 +2147,10 @@ export interface AgentAuditLogRow {
   created_at: string;
 }
 
-export async function listPostgresAgentAuditLogs(userId: number, limit = 20): Promise<AgentAuditLogRow[]> {
+export async function listPostgresAgentAuditLogs(userId?: number, limit = 20): Promise<AgentAuditLogRow[]> {
+  const whereClause = userId ? "WHERE agent_audit_logs.user_id = $1" : "";
+  const params = userId ? [userId, limit] : [limit];
+  const limitPlaceholder = userId ? "$2" : "$1";
   const result = await pool.query<AgentAuditLogRow>(
     `
       SELECT
@@ -1795,11 +2165,11 @@ export async function listPostgresAgentAuditLogs(userId: number, limit = 20): Pr
       FROM agent_audit_logs
       LEFT JOIN agents ON agents.id = agent_audit_logs.agent_id
       LEFT JOIN api_keys ON api_keys.id = agent_audit_logs.api_key_id
-      WHERE agent_audit_logs.user_id = $1
+      ${whereClause}
       ORDER BY agent_audit_logs.created_at DESC, agent_audit_logs.id DESC
-      LIMIT $2
+      LIMIT ${limitPlaceholder}
     `,
-    [userId, limit],
+    params,
   );
   return result.rows;
 }
