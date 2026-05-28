@@ -1816,6 +1816,8 @@ export type FeedbackRow = {
   content: string;
   contact: string | null;
   admin_note: string | null;
+  admin_response: string | null;
+  responded_at: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1828,7 +1830,7 @@ export async function createPostgresFeedback(
     `
       INSERT INTO feedbacks (user_id, type, title, content, contact)
       VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, created_at::text, updated_at::text
+      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, admin_response, responded_at::text, created_at::text, updated_at::text
     `,
     [userId, payload.type, payload.title, payload.content, payload.contact ?? null],
   );
@@ -1853,6 +1855,8 @@ export async function listPostgresFeedbacks(status?: FeedbackStatus, limit = 100
         feedbacks.content,
         feedbacks.contact,
         feedbacks.admin_note,
+        feedbacks.admin_response,
+        feedbacks.responded_at::text,
         feedbacks.created_at::text,
         feedbacks.updated_at::text
       FROM feedbacks
@@ -1868,19 +1872,160 @@ export async function listPostgresFeedbacks(status?: FeedbackStatus, limit = 100
 
 export async function updatePostgresFeedback(
   id: number,
-  patch: { status?: FeedbackStatus; adminNote?: string },
+  patch: { status?: FeedbackStatus; adminNote?: string; adminResponse?: string },
 ): Promise<FeedbackRow | null> {
   const result = await pool.query<FeedbackRow>(
     `
       UPDATE feedbacks
       SET status = COALESCE($2, status),
           admin_note = COALESCE($3, admin_note),
+          admin_response = COALESCE($4, admin_response),
+          responded_at = CASE WHEN $4 IS NULL THEN responded_at ELSE CURRENT_TIMESTAMP END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
-      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, created_at::text, updated_at::text
+      RETURNING id, user_id, NULL::text AS username, type, status, title, content, contact, admin_note, admin_response, responded_at::text, created_at::text, updated_at::text
     `,
-    [id, patch.status ?? null, patch.adminNote ?? null],
+    [id, patch.status ?? null, patch.adminNote ?? null, patch.adminResponse ?? null],
   );
+  return result.rows[0] ?? null;
+}
+
+export async function listPostgresUserFeedbacks(userId: number): Promise<FeedbackRow[]> {
+  const result = await pool.query<FeedbackRow>(
+    `
+      SELECT
+        feedbacks.id,
+        feedbacks.user_id,
+        users.username,
+        feedbacks.type,
+        feedbacks.status,
+        feedbacks.title,
+        feedbacks.content,
+        feedbacks.contact,
+        feedbacks.admin_note,
+        feedbacks.admin_response,
+        feedbacks.responded_at::text,
+        feedbacks.created_at::text,
+        feedbacks.updated_at::text
+      FROM feedbacks
+      LEFT JOIN users ON users.id = feedbacks.user_id
+      WHERE feedbacks.user_id = $1
+      ORDER BY feedbacks.updated_at DESC, feedbacks.id DESC
+      LIMIT 50
+    `,
+    [userId],
+  );
+  return result.rows;
+}
+
+export type SystemAnnouncementStatus = "active" | "paused";
+
+export type SystemAnnouncementRow = {
+  id: number;
+  title: string;
+  content: string;
+  status: SystemAnnouncementStatus;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getActivePostgresAnnouncement(): Promise<SystemAnnouncementRow | null> {
+  const result = await pool.query<SystemAnnouncementRow>(
+    `
+      SELECT id, title, content, status, starts_at::text, ends_at::text, created_by, created_at::text, updated_at::text
+      FROM system_announcements
+      WHERE status = 'active'
+        AND (starts_at IS NULL OR starts_at <= CURRENT_TIMESTAMP)
+        AND (ends_at IS NULL OR ends_at >= CURRENT_TIMESTAMP)
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `,
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function listPostgresAnnouncements(limit = 20): Promise<SystemAnnouncementRow[]> {
+  const result = await pool.query<SystemAnnouncementRow>(
+    `
+      SELECT id, title, content, status, starts_at::text, ends_at::text, created_by, created_at::text, updated_at::text
+      FROM system_announcements
+      ORDER BY created_at DESC, id DESC
+      LIMIT $1
+    `,
+    [limit],
+  );
+  return result.rows;
+}
+
+export async function createPostgresAnnouncement(
+  adminUserId: number,
+  payload: {
+    title: string;
+    content: string;
+    status?: SystemAnnouncementStatus;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  },
+): Promise<SystemAnnouncementRow> {
+  const result = await pool.query<SystemAnnouncementRow>(
+    `
+      INSERT INTO system_announcements (title, content, status, starts_at, ends_at, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, title, content, status, starts_at::text, ends_at::text, created_by, created_at::text, updated_at::text
+    `,
+    [
+      payload.title,
+      payload.content,
+      payload.status ?? "active",
+      payload.startsAt ?? null,
+      payload.endsAt ?? null,
+      adminUserId,
+    ],
+  );
+  await recordPostgresUserActivity(adminUserId, "admin.announcement.create", "announcement", result.rows[0].id);
+  return result.rows[0];
+}
+
+export async function updatePostgresAnnouncement(
+  id: number,
+  adminUserId: number,
+  patch: {
+    title?: string;
+    content?: string;
+    status?: SystemAnnouncementStatus;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  },
+): Promise<SystemAnnouncementRow | null> {
+  const result = await pool.query<SystemAnnouncementRow>(
+    `
+      UPDATE system_announcements
+      SET title = COALESCE($2, title),
+          content = COALESCE($3, content),
+          status = COALESCE($4, status),
+          starts_at = CASE WHEN $5::boolean THEN $6::timestamptz ELSE starts_at END,
+          ends_at = CASE WHEN $7::boolean THEN $8::timestamptz ELSE ends_at END,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING id, title, content, status, starts_at::text, ends_at::text, created_by, created_at::text, updated_at::text
+    `,
+    [
+      id,
+      patch.title ?? null,
+      patch.content ?? null,
+      patch.status ?? null,
+      Object.prototype.hasOwnProperty.call(patch, "startsAt"),
+      patch.startsAt ?? null,
+      Object.prototype.hasOwnProperty.call(patch, "endsAt"),
+      patch.endsAt ?? null,
+    ],
+  );
+  if (result.rows[0]) {
+    await recordPostgresUserActivity(adminUserId, "admin.announcement.update", "announcement", id, { status: patch.status });
+  }
   return result.rows[0] ?? null;
 }
 
@@ -1888,6 +2033,7 @@ export type AdminOverview = {
   totals: {
     users: number;
     activeUsers7d: number;
+    activeUsers30d: number;
     newUsersToday: number;
     newUsers7d: number;
     newUsers30d: number;
@@ -1901,7 +2047,7 @@ export type AdminOverview = {
   daily: Array<{
     date: string;
     newUsers: number;
-    activeUsers: number;
+      activeUsers: number;
     diaries: number;
     agentDiaries: number;
     todos: number;
@@ -1935,6 +2081,7 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
     pool.query<{
       users: string;
       active_users_7d: string;
+      active_users_30d: string;
       new_users_today: string;
       new_users_7d: string;
       new_users_30d: string;
@@ -1954,6 +2101,12 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
             WHERE created_at >= CURRENT_DATE - INTERVAL '6 days'
               AND user_id IS NOT NULL
           )::text AS active_users_7d,
+          (
+            SELECT COUNT(DISTINCT user_id)
+            FROM user_activity_events
+            WHERE created_at >= CURRENT_DATE - INTERVAL '29 days'
+              AND user_id IS NOT NULL
+          )::text AS active_users_30d,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE)::text AS new_users_today,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '6 days')::text AS new_users_7d,
           (SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE - INTERVAL '29 days')::text AS new_users_30d,
@@ -2028,6 +2181,7 @@ export async function getPostgresAdminOverview(): Promise<AdminOverview> {
     totals: {
       users: number(totals?.users),
       activeUsers7d: number(totals?.active_users_7d),
+      activeUsers30d: number(totals?.active_users_30d),
       newUsersToday: number(totals?.new_users_today),
       newUsers7d: number(totals?.new_users_7d),
       newUsers30d: number(totals?.new_users_30d),
@@ -2090,8 +2244,74 @@ export async function listPostgresAdminUsers(search = "", limit = 100): Promise<
   return result.rows;
 }
 
+export async function updatePostgresAdminUser(
+  userId: number,
+  actorUserId: number,
+  patch: { role?: "user" | "admin"; status?: "active" | "disabled" },
+): Promise<AdminUserListItem | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query<{ id: number; role: "user" | "admin"; status: "active" | "disabled" }>(
+      "SELECT id, role, status FROM users WHERE id = $1 FOR UPDATE",
+      [userId],
+    );
+    const current = existing.rows[0];
+    if (!current) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const nextRole = patch.role ?? current.role;
+    const nextStatus = patch.status ?? current.status;
+    const activeAdminCount = await client.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM users WHERE role = 'admin' AND status = 'active'",
+    );
+
+    if (
+      current.role === "admin" &&
+      current.status === "active" &&
+      (nextRole !== "admin" || nextStatus !== "active") &&
+      Number(activeAdminCount.rows[0]?.count ?? 0) <= 1
+    ) {
+      throw new Error("至少需要保留 1 个可用管理员账号");
+    }
+
+    const result = await client.query(
+      `
+        UPDATE users
+        SET role = $2,
+            status = $3,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+      `,
+      [userId, nextRole, nextStatus],
+    );
+    if (result.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+    await client.query(
+      `
+        INSERT INTO user_activity_events (user_id, event_type, target_type, target_id, meta)
+        VALUES ($1, 'admin.user.update', 'user', $2, $3::jsonb)
+      `,
+      [actorUserId, userId, JSON.stringify({ role: nextRole, status: nextStatus })],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const users = await listPostgresAdminUsers("", 500);
+  return users.find((user) => user.id === userId) ?? null;
+}
+
 export async function getPostgresAdminUserDetail(userId: number) {
-  const [userResult, activityResult, auditResult] = await Promise.all([
+  const [userResult, activityResult, auditResult, diariesResult, todosResult, feedbackResult] = await Promise.all([
     pool.query<any>(
       `
         SELECT *
@@ -2126,6 +2346,27 @@ export async function getPostgresAdminUserDetail(userId: number) {
       [userId],
     ),
     listPostgresAgentAuditLogs(userId, 50),
+    pool.query(
+      `
+        SELECT id, source_type, title, summary, created_at::text
+        FROM diaries
+        WHERE user_id = $1 AND is_deleted = FALSE
+        ORDER BY created_at DESC, id DESC
+        LIMIT 8
+      `,
+      [userId],
+    ),
+    pool.query(
+      `
+        SELECT id, content, status, created_at::text, updated_at::text
+        FROM todos
+        WHERE user_id = $1
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 8
+      `,
+      [userId],
+    ),
+    listPostgresUserFeedbacks(userId),
   ]);
 
   if (!userResult.rows[0]) return null;
@@ -2133,6 +2374,9 @@ export async function getPostgresAdminUserDetail(userId: number) {
     user: userResult.rows[0],
     activities: activityResult.rows,
     auditLogs: auditResult,
+    recentDiaries: diariesResult.rows,
+    recentTodos: todosResult.rows,
+    feedbacks: feedbackResult,
   };
 }
 

@@ -81,21 +81,30 @@ import {
   updateTodoText,
   applyRestoreBackup,
   createFeedback,
+  createAdminAnnouncement,
   getAdminOverview,
+  getAdminUserDetail,
+  getCurrentAnnouncement,
   listAdminAuditLogs,
+  listAdminAnnouncements,
   listAdminFeedbacks,
   listAdminUsers,
+  listMyFeedbacks,
   updateUserProfile,
   listAgentAuditLogs,
   type AgentAuditLogRow,
   type AdminOverviewResponse,
+  type AdminUserDetail,
   type AdminUserListItem,
   type FeedbackItem,
   type FeedbackStatus,
   type FeedbackType,
   type ModelConnectionTestResponse,
+  type SystemAnnouncement,
   testModelConnection,
+  updateAdminAnnouncement,
   updateAdminFeedback,
+  updateAdminUser,
 } from "./repositories/workDiaryRepository";
 import "./styles.css";
 import type { DiaryEntry, Mission, MissionNode, ModelServiceConfig, SearchResult, StatItem, ThemeName, TodoItem, ViewKey, User } from "./types";
@@ -156,6 +165,7 @@ function App() {
   );
   const [shareCard, setShareCard] = useState<ShareCardResponse | null>(null);
   const [agentConnectionCount, setAgentConnectionCount] = useState(0);
+  const [announcement, setAnnouncement] = useState<SystemAnnouncement | null>(null);
   const [modelConfig, setModelConfig] = useState<ModelServiceConfig>({
     provider: "OpenAI Compatible",
     baseUrl: "http://localhost:11434/v1",
@@ -188,6 +198,7 @@ function App() {
       void loadLatestShareCard();
       void loadModelConfig();
       void loadAgentConnectionCount();
+      void loadAnnouncement();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setShowAuthModal(true);
@@ -198,6 +209,7 @@ function App() {
         void loadLatestShareCard();
         void loadModelConfig();
         void loadAgentConnectionCount();
+        void loadAnnouncement();
       }
     }
   }
@@ -272,6 +284,14 @@ function App() {
       setAgentConnectionCount(activeAgentIds.size);
     } catch {
       setAgentConnectionCount(0);
+    }
+  }
+
+  async function loadAnnouncement() {
+    try {
+      setAnnouncement(await getCurrentAnnouncement());
+    } catch {
+      setAnnouncement(null);
     }
   }
 
@@ -702,6 +722,7 @@ function App() {
     void loadLatestShareCard();
     void loadModelConfig();
     void loadAgentConnectionCount();
+    void loadAnnouncement();
     setReward(`欢迎回来，${user?.nickname || user?.username}`);
   }
 
@@ -771,6 +792,7 @@ function App() {
           onLogout={handleLogout}
           onLoginClick={() => setShowAuthModal(true)}
         />
+        {announcement && <AnnouncementBanner announcement={announcement} />}
         {activeView === "dashboard" && (
           <DashboardView
             entries={entries}
@@ -994,6 +1016,18 @@ function DashboardView({
         />
       </div>
     </>
+  );
+}
+
+function AnnouncementBanner({ announcement }: { announcement: SystemAnnouncement }) {
+  return (
+    <section className="announcement-banner">
+      <Bell size={18} />
+      <div>
+        <strong>{announcement.title}</strong>
+        <p>{announcement.content}</p>
+      </div>
+    </section>
   );
 }
 
@@ -3464,8 +3498,15 @@ function AdminView() {
   const [users, setUsers] = useState<AdminUserListItem[]>([]);
   const [feedbacks, setFeedbacks] = useState<FeedbackItem[]>([]);
   const [auditLogs, setAuditLogs] = useState<AgentAuditLogRow[]>([]);
+  const [announcements, setAnnouncements] = useState<SystemAnnouncement[]>([]);
+  const [selectedUserDetail, setSelectedUserDetail] = useState<AdminUserDetail | null>(null);
   const [userSearch, setUserSearch] = useState("");
   const [feedbackFilter, setFeedbackFilter] = useState<FeedbackStatus | "all">("all");
+  const [feedbackResponses, setFeedbackResponses] = useState<Record<number, string>>({});
+  const [announcementDraft, setAnnouncementDraft] = useState({
+    title: "作业本更新提示",
+    content: "后台已上线用户管理、反馈回复和运营公告能力。",
+  });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -3473,16 +3514,18 @@ function AdminView() {
     setIsLoading(true);
     setError("");
     try {
-      const [nextOverview, nextUsers, nextFeedbacks, nextAuditLogs] = await Promise.all([
+      const [nextOverview, nextUsers, nextFeedbacks, nextAuditLogs, nextAnnouncements] = await Promise.all([
         getAdminOverview(),
         listAdminUsers(userSearch),
         listAdminFeedbacks(feedbackFilter === "all" ? undefined : feedbackFilter),
         listAdminAuditLogs(),
+        listAdminAnnouncements(),
       ]);
       setOverview(nextOverview);
       setUsers(nextUsers);
       setFeedbacks(nextFeedbacks);
       setAuditLogs(nextAuditLogs);
+      setAnnouncements(nextAnnouncements);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "后台数据加载失败");
     } finally {
@@ -3503,11 +3546,72 @@ function AdminView() {
     }
   }
 
+  async function saveFeedbackResponse(feedback: FeedbackItem) {
+    const response = feedbackResponses[feedback.id]?.trim();
+    if (!response) return;
+    try {
+      const updated = await updateAdminFeedback(feedback.id, {
+        status: feedback.status === "closed" ? "closed" : "processing",
+        adminResponse: response,
+      });
+      setFeedbacks((current) => current.map((item) => (item.id === feedback.id ? updated : item)));
+      setFeedbackResponses((current) => ({ ...current, [feedback.id]: "" }));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "反馈回复保存失败");
+    }
+  }
+
+  async function updateUser(id: number, patch: { role?: "user" | "admin"; status?: "active" | "disabled" }) {
+    try {
+      const updated = await updateAdminUser(id, patch);
+      setUsers((current) => current.map((user) => (user.id === id ? updated : user)));
+      if (selectedUserDetail?.user.id === id) {
+        setSelectedUserDetail(await getAdminUserDetail(id));
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "用户状态更新失败");
+    }
+  }
+
+  async function openUserDetail(id: number) {
+    try {
+      setSelectedUserDetail(await getAdminUserDetail(id));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "用户详情加载失败");
+    }
+  }
+
+  async function createAnnouncement() {
+    if (!announcementDraft.title.trim() || !announcementDraft.content.trim()) return;
+    try {
+      const created = await createAdminAnnouncement({
+        title: announcementDraft.title.trim(),
+        content: announcementDraft.content.trim(),
+        status: "active",
+      });
+      setAnnouncements((current) => [created, ...current]);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "公告创建失败");
+    }
+  }
+
+  async function toggleAnnouncement(announcement: SystemAnnouncement) {
+    try {
+      const updated = await updateAdminAnnouncement(announcement.id, {
+        status: announcement.status === "active" ? "paused" : "active",
+      });
+      setAnnouncements((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "公告状态更新失败");
+    }
+  }
+
   const totals = overview?.totals;
   const adminStats: StatItem[] = [
     { label: "总用户", value: String(totals?.users ?? 0), icon: Users },
     { label: "今日新增", value: String(totals?.newUsersToday ?? 0), icon: Plus },
     { label: "7日活跃", value: String(totals?.activeUsers7d ?? 0), icon: Sparkles },
+    { label: "30日活跃", value: String(totals?.activeUsers30d ?? 0), icon: CalendarDays },
     { label: "待处理反馈", value: String(totals?.openFeedbacks ?? 0), icon: MessageSquareText },
   ];
 
@@ -3565,10 +3669,62 @@ function AdminView() {
                   <span>{user.has_llm_config ? "LLM 已配" : "LLM 未配"}</span>
                   <span>{user.has_embedding_config ? "Embedding 已配" : "Embedding 未配"}</span>
                 </div>
+                <div className="admin-row-actions">
+                  <button className="soft-btn" onClick={() => void openUserDetail(user.id)}>
+                    详情
+                  </button>
+                  <button
+                    className="soft-btn"
+                    onClick={() => void updateUser(user.id, { status: user.status === "active" ? "disabled" : "active" })}
+                  >
+                    {user.status === "active" ? "禁用" : "恢复"}
+                  </button>
+                  <button
+                    className="soft-btn"
+                    onClick={() => void updateUser(user.id, { role: user.role === "admin" ? "user" : "admin" })}
+                  >
+                    {user.role === "admin" ? "取消管理员" : "设为管理员"}
+                  </button>
+                </div>
               </article>
             ))}
           </div>
         </section>
+        {selectedUserDetail && (
+          <section className="panel admin-wide">
+            <PanelTitle
+              icon={<ShieldCheck size={18} />}
+              title={`用户详情：${selectedUserDetail.user.nickname || selectedUserDetail.user.username}`}
+              action={`${selectedUserDetail.user.role} · ${selectedUserDetail.user.status}`}
+            />
+            <div className="admin-detail-grid">
+              <div className="admin-detail-block">
+                <strong>基础配置</strong>
+                <span>注册 {formatDateTime(selectedUserDetail.user.created_at)}</span>
+                <span>最近登录 {selectedUserDetail.user.last_login_at ? formatDateTime(selectedUserDetail.user.last_login_at) : "暂无"}</span>
+                <span>LLM 配置 {selectedUserDetail.user.llm_config_count} · Embedding 配置 {selectedUserDetail.user.embedding_config_count}</span>
+              </div>
+              <div className="admin-detail-block">
+                <strong>最近行为</strong>
+                {selectedUserDetail.activities.slice(0, 5).map((activity) => (
+                  <span key={activity.id}>{activity.event_type} · {formatDateTime(activity.created_at)}</span>
+                ))}
+              </div>
+              <div className="admin-detail-block">
+                <strong>最近日记</strong>
+                {selectedUserDetail.recentDiaries.slice(0, 5).map((entry) => (
+                  <span key={entry.id}>{entry.source_type} · {entry.title}</span>
+                ))}
+              </div>
+              <div className="admin-detail-block">
+                <strong>最近待办</strong>
+                {selectedUserDetail.recentTodos.slice(0, 5).map((todo) => (
+                  <span key={todo.id}>{todo.status} · {todo.content}</span>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
         <section className="panel">
           <PanelTitle icon={<MessageSquareText size={18} />} title="问题反馈" action={`${feedbacks.length} 条`} />
           <div className="mission-archive-filters">
@@ -3589,12 +3745,24 @@ function AdminView() {
                   <strong>{feedback.title}</strong>
                   <p>{feedback.content}</p>
                   <span>{feedback.type} · {feedback.status} · {feedback.username ?? "匿名"}</span>
+                  {feedback.admin_response && <p>已回复：{feedback.admin_response}</p>}
+                  <textarea
+                    rows={3}
+                    value={feedbackResponses[feedback.id] ?? ""}
+                    onChange={(event) =>
+                      setFeedbackResponses((current) => ({ ...current, [feedback.id]: event.target.value }))
+                    }
+                    placeholder="写给用户看的回复"
+                  />
                   <div>
                     {(["open", "processing", "resolved", "closed"] as const).map((status) => (
                       <button className="mini-danger-btn" key={status} onClick={() => void updateFeedbackStatus(feedback.id, status)}>
                         {status}
                       </button>
                     ))}
+                    <button className="soft-btn" onClick={() => void saveFeedbackResponse(feedback)}>
+                      保存回复
+                    </button>
                   </div>
                 </article>
               ))
@@ -3625,6 +3793,40 @@ function AdminView() {
                 <p>Agent 通过 API Key 操作后会留下审计记录。</p>
               </div>
             )}
+          </div>
+        </section>
+        <section className="panel admin-wide">
+          <PanelTitle icon={<Bell size={18} />} title="系统公告" action={`${announcements.length} 条`} />
+          <div className="admin-announcement-form">
+            <input
+              value={announcementDraft.title}
+              onChange={(event) => setAnnouncementDraft((current) => ({ ...current, title: event.target.value }))}
+              placeholder="公告标题"
+            />
+            <textarea
+              rows={3}
+              value={announcementDraft.content}
+              onChange={(event) => setAnnouncementDraft((current) => ({ ...current, content: event.target.value }))}
+              placeholder="公告内容"
+            />
+            <button className="primary-btn" onClick={() => void createAnnouncement()}>
+              <Plus size={18} />
+              发布公告
+            </button>
+          </div>
+          <div className="admin-feedback-list">
+            {announcements.map((announcement) => (
+              <article className="admin-feedback-card" key={announcement.id}>
+                <strong>{announcement.title}</strong>
+                <p>{announcement.content}</p>
+                <span>{announcement.status} · {formatDateTime(announcement.updated_at)}</span>
+                <div>
+                  <button className="soft-btn" onClick={() => void toggleAnnouncement(announcement)}>
+                    {announcement.status === "active" ? "暂停" : "启用"}
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       </div>
@@ -3765,6 +3967,7 @@ function SettingsView({
   const [feedbackContent, setFeedbackContent] = useState("");
   const [feedbackContact, setFeedbackContact] = useState("");
   const [feedbackStatusText, setFeedbackStatusText] = useState("");
+  const [myFeedbacks, setMyFeedbacks] = useState<FeedbackItem[]>([]);
 
   useEffect(() => {
     if (currentUser) {
@@ -3776,6 +3979,18 @@ function SettingsView({
       setProfileTerms(currentUser.workProfile?.specializedTerms || "");
     }
   }, [currentUser]);
+
+  useEffect(() => {
+    void loadMyFeedbacks();
+  }, []);
+
+  async function loadMyFeedbacks() {
+    try {
+      setMyFeedbacks(await listMyFeedbacks());
+    } catch {
+      setMyFeedbacks([]);
+    }
+  }
 
   async function saveUserProfile() {
     setIsSavingProfile(true);
@@ -3819,6 +4034,7 @@ function SettingsView({
       setFeedbackContent("");
       setFeedbackContact("");
       setFeedbackStatusText("反馈已提交，管理员会在后台处理。");
+      await loadMyFeedbacks();
     } catch (error) {
       setFeedbackStatusText(error instanceof Error ? error.message : "反馈提交失败");
     }
@@ -4158,6 +4374,21 @@ function SettingsView({
               提交反馈
             </button>
             {feedbackStatusText && <p className="success-text">{feedbackStatusText}</p>}
+            {myFeedbacks.length > 0 && (
+              <div className="feedback-history">
+                {myFeedbacks.slice(0, 4).map((feedback) => (
+                  <article className="feedback-history-card" key={feedback.id}>
+                    <strong>{feedback.title}</strong>
+                    <span>{feedback.type} · {feedback.status} · {formatDateTime(feedback.updated_at)}</span>
+                    {feedback.admin_response ? (
+                      <p>管理员回复：{feedback.admin_response}</p>
+                    ) : (
+                      <p>暂未回复，当前状态：{feedback.status}</p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </section>
 

@@ -46,8 +46,14 @@ import {
   touchPostgresUserLogin,
   recordPostgresUserActivity,
   createPostgresFeedback,
+  createPostgresAnnouncement,
+  getActivePostgresAnnouncement,
   listPostgresFeedbacks,
+  listPostgresAnnouncements,
+  listPostgresUserFeedbacks,
   updatePostgresFeedback,
+  updatePostgresAnnouncement,
+  updatePostgresAdminUser,
   getPostgresAdminOverview,
   listPostgresAdminUsers,
   getPostgresAdminUserDetail,
@@ -56,6 +62,7 @@ import {
   type RestoreStrategy,
   type FeedbackStatus,
   type FeedbackType,
+  type SystemAnnouncementStatus,
 } from "./repositories/postgresRepository";
 import {
   createDiary,
@@ -347,6 +354,22 @@ app.get("/api/auth/me", requireAuth, async (request, response) => {
   }
 });
 
+app.get("/api/announcements/current", requireAuth, async (_request, response) => {
+  if (!usePostgres) {
+    response.json(null);
+    return;
+  }
+
+  try {
+    response.json(await getActivePostgresAnnouncement());
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load announcement",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
 app.post("/api/feedbacks", requireAuth, async (request, response) => {
   const payload = request.body as {
     type?: FeedbackType;
@@ -378,6 +401,22 @@ app.post("/api/feedbacks", requireAuth, async (request, response) => {
   } catch (error) {
     response.status(503).json({
       message: "Failed to create feedback",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/feedbacks", requireAuth, async (request, response) => {
+  if (!usePostgres) {
+    response.json([]);
+    return;
+  }
+
+  try {
+    response.json(await listPostgresUserFeedbacks(request.user!.id));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load feedbacks",
       detail: error instanceof Error ? error.message : "Unknown error",
     });
   }
@@ -427,6 +466,39 @@ app.get("/api/admin/users/:id", requireAuth, requireAdmin, async (request, respo
   }
 });
 
+app.patch("/api/admin/users/:id", requireAuth, requireAdmin, async (request, response) => {
+  const id = Number(request.params.id);
+  const payload = request.body as { role?: "user" | "admin"; status?: "active" | "disabled" };
+  if (!Number.isInteger(id) || id <= 0) {
+    response.status(400).json({ message: "Invalid user id" });
+    return;
+  }
+  if (payload.role !== undefined && payload.role !== "user" && payload.role !== "admin") {
+    response.status(400).json({ message: "Invalid user role" });
+    return;
+  }
+  if (payload.status !== undefined && payload.status !== "active" && payload.status !== "disabled") {
+    response.status(400).json({ message: "Invalid user status" });
+    return;
+  }
+
+  try {
+    const user = await updatePostgresAdminUser(id, request.user!.id, {
+      role: payload.role,
+      status: payload.status,
+    });
+    if (!user) {
+      response.status(404).json({ message: "User not found" });
+      return;
+    }
+    response.json(user);
+  } catch (error) {
+    response.status(409).json({
+      message: error instanceof Error ? error.message : "Failed to update user",
+    });
+  }
+});
+
 app.get("/api/admin/feedbacks", requireAuth, requireAdmin, async (request, response) => {
   const status = isFeedbackStatus(request.query.status) ? request.query.status : undefined;
   try {
@@ -441,7 +513,7 @@ app.get("/api/admin/feedbacks", requireAuth, requireAdmin, async (request, respo
 
 app.patch("/api/admin/feedbacks/:id", requireAuth, requireAdmin, async (request, response) => {
   const id = Number(request.params.id);
-  const payload = request.body as { status?: FeedbackStatus; adminNote?: string };
+  const payload = request.body as { status?: FeedbackStatus; adminNote?: string; adminResponse?: string };
   if (!Number.isInteger(id) || id <= 0) {
     response.status(400).json({ message: "Invalid feedback id" });
     return;
@@ -455,6 +527,7 @@ app.patch("/api/admin/feedbacks/:id", requireAuth, requireAdmin, async (request,
     const feedback = await updatePostgresFeedback(id, {
       status: payload.status,
       adminNote: payload.adminNote?.trim().slice(0, 2000),
+      adminResponse: payload.adminResponse?.trim().slice(0, 4000),
     });
     if (!feedback) {
       response.status(404).json({ message: "Feedback not found" });
@@ -464,6 +537,91 @@ app.patch("/api/admin/feedbacks/:id", requireAuth, requireAdmin, async (request,
   } catch (error) {
     response.status(503).json({
       message: "Failed to update feedback",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.get("/api/admin/announcements", requireAuth, requireAdmin, async (_request, response) => {
+  try {
+    response.json(await listPostgresAnnouncements(50));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to load announcements",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.post("/api/admin/announcements", requireAuth, requireAdmin, async (request, response) => {
+  const payload = request.body as {
+    title?: string;
+    content?: string;
+    status?: SystemAnnouncementStatus;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  };
+  const title = payload.title?.trim();
+  const content = payload.content?.trim();
+  if (!title || !content) {
+    response.status(400).json({ message: "title and content are required" });
+    return;
+  }
+  if (payload.status !== undefined && !isAnnouncementStatus(payload.status)) {
+    response.status(400).json({ message: "Invalid announcement status" });
+    return;
+  }
+
+  try {
+    response.status(201).json(await createPostgresAnnouncement(request.user!.id, {
+      title: title.slice(0, 120),
+      content: content.slice(0, 2000),
+      status: payload.status,
+      startsAt: payload.startsAt ?? null,
+      endsAt: payload.endsAt ?? null,
+    }));
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to create announcement",
+      detail: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
+app.patch("/api/admin/announcements/:id", requireAuth, requireAdmin, async (request, response) => {
+  const id = Number(request.params.id);
+  const payload = request.body as {
+    title?: string;
+    content?: string;
+    status?: SystemAnnouncementStatus;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  };
+  if (!Number.isInteger(id) || id <= 0) {
+    response.status(400).json({ message: "Invalid announcement id" });
+    return;
+  }
+  if (payload.status !== undefined && !isAnnouncementStatus(payload.status)) {
+    response.status(400).json({ message: "Invalid announcement status" });
+    return;
+  }
+
+  try {
+    const announcement = await updatePostgresAnnouncement(id, request.user!.id, {
+      title: payload.title?.trim().slice(0, 120),
+      content: payload.content?.trim().slice(0, 2000),
+      status: payload.status,
+      startsAt: payload.startsAt,
+      endsAt: payload.endsAt,
+    });
+    if (!announcement) {
+      response.status(404).json({ message: "Announcement not found" });
+      return;
+    }
+    response.json(announcement);
+  } catch (error) {
+    response.status(503).json({
+      message: "Failed to update announcement",
       detail: error instanceof Error ? error.message : "Unknown error",
     });
   }
@@ -2639,6 +2797,10 @@ function isFeedbackType(value: unknown): value is FeedbackType {
 
 function isFeedbackStatus(value: unknown): value is FeedbackStatus {
   return value === "open" || value === "processing" || value === "resolved" || value === "closed";
+}
+
+function isAnnouncementStatus(value: unknown): value is SystemAnnouncementStatus {
+  return value === "active" || value === "paused";
 }
 
 async function testModelPart(check: () => Promise<string>) {

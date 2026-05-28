@@ -198,6 +198,8 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     content TEXT NOT NULL,
     contact VARCHAR(255),
     admin_note TEXT,
+    admin_response TEXT,
+    responded_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -215,3 +217,16 @@ CREATE TABLE IF NOT EXISTS user_activity_events (
 );
 CREATE INDEX IF NOT EXISTS idx_user_activity_events_user_time ON user_activity_events(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_activity_events_type_time ON user_activity_events(event_type, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS system_announcements (
+    id SERIAL PRIMARY KEY,
+    title VARCHAR(160) NOT NULL,
+    content TEXT NOT NULL,
+    status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'paused')),
+    starts_at TIMESTAMP WITH TIME ZONE,
+    ends_at TIMESTAMP WITH TIME ZONE,
+    created_by INT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_system_announcements_status_time ON system_announcements(status, starts_at, ends_at, created_at DESC);

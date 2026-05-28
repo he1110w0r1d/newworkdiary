@@ -118,6 +118,22 @@ export type FeedbackItem = {
   content: string;
   contact: string | null;
   admin_note: string | null;
+  admin_response: string | null;
+  responded_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SystemAnnouncementStatus = "active" | "paused";
+
+export type SystemAnnouncement = {
+  id: number;
+  title: string;
+  content: string;
+  status: SystemAnnouncementStatus;
+  starts_at: string | null;
+  ends_at: string | null;
+  created_by: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -126,6 +142,7 @@ export type AdminOverviewResponse = {
   totals: {
     users: number;
     activeUsers7d: number;
+    activeUsers30d: number;
     newUsersToday: number;
     newUsers7d: number;
     newUsers30d: number;
@@ -166,6 +183,47 @@ export type AdminUserListItem = {
   summary_count: number;
   has_llm_config: boolean;
   has_embedding_config: boolean;
+};
+
+export type AdminUserDetail = {
+  user: {
+    id: number;
+    username: string;
+    nickname: string | null;
+    role: "user" | "admin";
+    status: "active" | "disabled";
+    bio: string | null;
+    avatar: string | null;
+    work_profile: Record<string, unknown> | null;
+    created_at: string;
+    last_login_at: string | null;
+    llm_config_count: number;
+    embedding_config_count: number;
+  };
+  activities: Array<{
+    id: number;
+    event_type: string;
+    target_type: string | null;
+    target_id: number | null;
+    meta: Record<string, unknown>;
+    created_at: string;
+  }>;
+  auditLogs: AgentAuditLogRow[];
+  recentDiaries: Array<{
+    id: number;
+    source_type: "human" | "agent" | "system";
+    title: string;
+    summary: string;
+    created_at: string;
+  }>;
+  recentTodos: Array<{
+    id: number;
+    content: string;
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  feedbacks: FeedbackItem[];
 };
 
 export type TodoStatusHistoryItem = {
@@ -430,6 +488,14 @@ export async function createFeedback(payload: {
   });
 }
 
+export async function listMyFeedbacks() {
+  return apiRequest<FeedbackItem[]>("/feedbacks");
+}
+
+export async function getCurrentAnnouncement() {
+  return apiRequest<SystemAnnouncement | null>("/announcements/current");
+}
+
 export async function getAdminOverview() {
   return apiRequest<AdminOverviewResponse>("/admin/overview");
 }
@@ -439,13 +505,63 @@ export async function listAdminUsers(search = "") {
   return apiRequest<AdminUserListItem[]>(`/admin/users${query}`);
 }
 
+export async function getAdminUserDetail(id: number) {
+  return apiRequest<AdminUserDetail>(`/admin/users/${id}`);
+}
+
+export async function updateAdminUser(
+  id: number,
+  patch: { role?: "user" | "admin"; status?: "active" | "disabled" },
+) {
+  return apiRequest<AdminUserListItem>(`/admin/users/${id}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
 export async function listAdminFeedbacks(status?: FeedbackStatus) {
   const query = status ? `?status=${encodeURIComponent(status)}` : "";
   return apiRequest<FeedbackItem[]>(`/admin/feedbacks${query}`);
 }
 
-export async function updateAdminFeedback(id: number, patch: { status?: FeedbackStatus; adminNote?: string }) {
+export async function updateAdminFeedback(
+  id: number,
+  patch: { status?: FeedbackStatus; adminNote?: string; adminResponse?: string },
+) {
   return apiRequest<FeedbackItem>(`/admin/feedbacks/${id}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function listAdminAnnouncements() {
+  return apiRequest<SystemAnnouncement[]>("/admin/announcements");
+}
+
+export async function createAdminAnnouncement(payload: {
+  title: string;
+  content: string;
+  status?: SystemAnnouncementStatus;
+  startsAt?: string | null;
+  endsAt?: string | null;
+}) {
+  return apiRequest<SystemAnnouncement>("/admin/announcements", {
+    method: "POST",
+    body: payload,
+  });
+}
+
+export async function updateAdminAnnouncement(
+  id: number,
+  patch: {
+    title?: string;
+    content?: string;
+    status?: SystemAnnouncementStatus;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  },
+) {
+  return apiRequest<SystemAnnouncement>(`/admin/announcements/${id}`, {
     method: "PATCH",
     body: patch,
   });

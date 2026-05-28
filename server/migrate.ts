@@ -17,6 +17,7 @@ async function migrate() {
     "003_mission_parent.sql",
     "004_todo_mission.sql",
     "005_admin_feedback.sql",
+    "006_admin_operations.sql",
   ];
 
   for (const file of migrationFiles) {

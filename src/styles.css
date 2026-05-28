@@ -3573,6 +3573,34 @@ h1 {
   text-align: center;
 }
 
+.announcement-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border: 1px solid rgba(237, 95, 159, 0.16);
+  border-radius: 16px;
+  background: linear-gradient(120deg, rgba(255, 245, 250, 0.92), rgba(231, 251, 243, 0.86));
+  box-shadow: 0 12px 28px rgba(237, 95, 159, 0.08);
+}
+
+.announcement-banner svg {
+  color: var(--pink-deep);
+  margin-top: 2px;
+}
+
+.announcement-banner strong {
+  color: var(--ink);
+}
+
+.announcement-banner p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
@@ -3633,7 +3661,7 @@ h1 {
 
 .admin-user-row {
   display: grid;
-  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.72fr) minmax(0, 1fr) auto;
   gap: 12px;
 }
 
@@ -3660,6 +3688,100 @@ h1 {
 .admin-feedback-card {
   display: grid;
   gap: 8px;
+}
+
+.admin-feedback-card textarea,
+.admin-announcement-form textarea,
+.admin-announcement-form input {
+  width: 100%;
+  border: 1px solid rgba(237, 95, 159, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  padding: 10px 12px;
+  font: inherit;
+  resize: vertical;
+  outline: none;
+}
+
+.admin-feedback-card textarea:focus,
+.admin-announcement-form textarea:focus,
+.admin-announcement-form input:focus {
+  border-color: var(--pink-deep);
+  box-shadow: 0 0 0 3px rgba(237, 95, 159, 0.12);
+}
+
+.admin-row-actions {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: start;
+  gap: 6px;
+}
+
+.admin-row-actions .soft-btn {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-detail-block {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 128px;
+  padding: 12px;
+  border: 1px solid rgba(237, 95, 159, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.admin-detail-block strong {
+  color: var(--ink);
+}
+
+.admin-detail-block span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-announcement-form,
+.feedback-history {
+  display: grid;
+  gap: 10px;
+}
+
+.feedback-history {
+  margin-top: 6px;
+}
+
+.feedback-history-card {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid rgba(237, 95, 159, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.66);
+}
+
+.feedback-history-card strong {
+  color: var(--ink);
+}
+
+.feedback-history-card span,
+.feedback-history-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .admin-feedback-card p,
@@ -4162,8 +4284,13 @@ h1 {
   .mission-achievement-card,
   .mission-wall,
   .mission-wall-timeline,
+  .admin-detail-grid,
   .admin-user-row {
     grid-template-columns: 1fr;
+  }
+
+  .admin-row-actions {
+    justify-content: flex-start;
   }
 
   .mission-achievement-medal {
