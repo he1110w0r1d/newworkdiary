@@ -3601,6 +3601,26 @@ h1 {
   line-height: 1.55;
 }
 
+.notification-btn {
+  position: relative;
+}
+
+.notification-badge {
+  position: absolute;
+  right: -5px;
+  top: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--pink-deep);
+  color: white;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 18px;
+  box-shadow: 0 6px 12px rgba(237, 95, 159, 0.25);
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);

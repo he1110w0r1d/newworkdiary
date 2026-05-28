@@ -166,6 +166,7 @@ function App() {
   const [shareCard, setShareCard] = useState<ShareCardResponse | null>(null);
   const [agentConnectionCount, setAgentConnectionCount] = useState(0);
   const [announcement, setAnnouncement] = useState<SystemAnnouncement | null>(null);
+  const [feedbackReplyCount, setFeedbackReplyCount] = useState(0);
   const [modelConfig, setModelConfig] = useState<ModelServiceConfig>({
     provider: "OpenAI Compatible",
     baseUrl: "http://localhost:11434/v1",
@@ -199,6 +200,7 @@ function App() {
       void loadModelConfig();
       void loadAgentConnectionCount();
       void loadAnnouncement();
+      void loadFeedbackNotifications();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         setShowAuthModal(true);
@@ -210,6 +212,7 @@ function App() {
         void loadModelConfig();
         void loadAgentConnectionCount();
         void loadAnnouncement();
+        void loadFeedbackNotifications();
       }
     }
   }
@@ -292,6 +295,15 @@ function App() {
       setAnnouncement(await getCurrentAnnouncement());
     } catch {
       setAnnouncement(null);
+    }
+  }
+
+  async function loadFeedbackNotifications() {
+    try {
+      const feedbacks = await listMyFeedbacks();
+      setFeedbackReplyCount(feedbacks.filter((feedback) => Boolean(feedback.admin_response)).length);
+    } catch {
+      setFeedbackReplyCount(0);
     }
   }
 
@@ -723,6 +735,7 @@ function App() {
     void loadModelConfig();
     void loadAgentConnectionCount();
     void loadAnnouncement();
+    void loadFeedbackNotifications();
     setReward(`欢迎回来，${user?.nickname || user?.username}`);
   }
 
@@ -789,6 +802,11 @@ function App() {
           }}
           currentUser={currentUser}
           agentConnectionCount={agentConnectionCount}
+          notificationCount={feedbackReplyCount}
+          onNotificationClick={() => {
+            setActiveView("settings");
+            setFeedbackReplyCount(0);
+          }}
           onLogout={handleLogout}
           onLoginClick={() => setShowAuthModal(true)}
         />
@@ -1104,6 +1122,8 @@ function Topbar({
   onOpenResult,
   currentUser,
   agentConnectionCount,
+  notificationCount,
+  onNotificationClick,
   onLogout,
   onLoginClick,
 }: {
@@ -1113,6 +1133,8 @@ function Topbar({
   onOpenResult: (target: ViewKey) => void;
   currentUser: User | null;
   agentConnectionCount: number;
+  notificationCount: number;
+  onNotificationClick: () => void;
   onLogout: () => void;
   onLoginClick: () => void;
 }) {
@@ -1170,8 +1192,9 @@ function Topbar({
           <span />
           {agentConnectionCount} 个 Agent 已连接
         </button>
-        <button className="icon-btn">
+        <button className="icon-btn notification-btn" onClick={onNotificationClick}>
           <Bell size={18} />
+          {notificationCount > 0 && <span className="notification-badge">{notificationCount}</span>}
         </button>
         {isDemo ? (
           <button className="soft-btn login-btn" onClick={onLoginClick} style={{ gap: "6px", height: "36px", borderRadius: "10px" }}>
